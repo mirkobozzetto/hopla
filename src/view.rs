@@ -109,7 +109,7 @@ fn palette(f: &mut Frame, app: &App, area: Rect, t: f32) {
     let items = app.items();
     let caret = if (t * 2.5) as i32 % 2 == 0 { "▌" } else { " " };
     f.render_widget(Paragraph::new(Line::from(vec!["❯ ".fg(GOLD).bold(), app.query.clone().fg(WHITE), caret.fg(GOLD)])), query);
-    f.render_widget(Paragraph::new(format!("{} rows", items.len()).fg(FAINT)).right_aligned(), query);
+    f.render_widget(Paragraph::new(format!("{} items", items.len()).fg(FAINT)).right_aligned(), query);
     f.render_widget(Paragraph::new("─".repeat(rule.width.into()).fg(FAINT)), rule);
     let wide = body.width >= 72 && body.height >= (MINI_H / 2) as u16 + 3;
     let [list, corner] = Layout::horizontal([Fill(1), Length(if wide { GUTTER } else { 0 })]).areas(body);
@@ -212,8 +212,9 @@ fn form_box(f: &mut Frame, form: &Form, area: Rect, t: f32) {
     lines.push(Line::default());
     let note: &[&str] = match form.kind {
         FormKind::Account => &[
-            "saves it in hop's .env, makes the SSH key if missing, runs install.sh,",
-            "copies the public key for GitHub, then runs gh auth login",
+            "saved in hop's .env, SSH key made if missing,",
+            "install.sh run, public key copied for GitHub,",
+            "then gh auth login",
         ],
         FormKind::Secret { .. } => &["typed blind, stored in the Keychain like hop secret set"],
     };
