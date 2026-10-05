@@ -9,6 +9,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tachyonfx::{Effect, Interpolation, fx};
 
 use crate::auth;
+use crate::surprise::{Fun, NAP};
 use crate::vault::{self, Account, Secret};
 
 const NOTE_TTL: Duration = Duration::from_millis(3500);
@@ -30,6 +31,23 @@ pub enum Lock {
     Open,
 }
 
+/// What the keys do in the vault room.
+pub enum Mode {
+    Browse,
+    Filter,
+    /// Typing a value for `name`; `naming` while a new box gets its name.
+    Deposit { name: String, value: String, naming: bool },
+    /// Waiting for `y` before emptying the selected box.
+    Confirm,
+}
+
+/// Lapla walking to the next room: from which account, which way.
+pub struct Travel {
+    pub from: usize,
+    pub dir: i32,
+    pub at: Instant,
+}
+
 #[derive(Clone, Copy)]
 pub enum Tone {
     Ok,
@@ -41,6 +59,8 @@ pub enum Tone {
 enum Job {
     Loaded(Result<Vec<Account>, String>),
     Value(String, String, Result<Option<String>, String>),
+    Stored(String, String, Result<(), String>),
+    Removed(String, String, Result<(), String>),
 }
 
 /// A copied value. Dropping it, on time out or on exit, empties the
@@ -75,6 +95,11 @@ pub struct App {
     pub note: Option<(String, Tone, Instant)>,
     pub clip: Option<Clip>,
     pub reading: Option<(String, String)>,
+    pub mode: Mode,
+    pub travel: Option<Travel>,
+    /// The slot machine of the last copy: which secret, since when.
+    pub spin: Option<(String, Instant)>,
+    pub fun: Fun,
     pub quit: bool,
     /// The unlock effect and when it last ran.
     pub fx: Option<(Effect, Instant)>,
@@ -100,6 +125,10 @@ impl App {
             note: None,
             clip: None,
             reading: None,
+            mode: Mode::Browse,
+            travel: None,
+            spin: None,
+            fun: Fun::default(),
             quit: false,
             fx: None,
             last_key: Instant::now(),
@@ -124,6 +153,11 @@ impl App {
         self.rows().get(self.sel).copied()
     }
 
+    /// Lapla naps when the vault room has had no key for a while.
+    pub fn asleep(&self) -> bool {
+        matches!(self.lock, Lock::Open) && matches!(self.mode, Mode::Browse) && self.last_key.elapsed() > NAP
+    }
+
     fn say(&mut self, text: impl Into<String>, tone: Tone) {
         self.note = Some((text.into(), tone, Instant::now()));
     }
@@ -131,7 +165,10 @@ impl App {
     pub fn tick(&mut self) {
         if let Lock::Scan(_, rx) = &self.lock {
             match rx.try_recv() {
-                Ok(Ok(())) => self.lock = Lock::Done(Instant::now()),
+                Ok(Ok(())) => {
+                    self.lock = Lock::Done(Instant::now());
+                    self.fun.passed();
+                }
                 Ok(Err(e)) => self.refuse(e),
                 Err(TryRecvError::Disconnected) => self.refuse("no answer".into()),
                 Err(TryRecvError::Empty) => {}
@@ -165,6 +202,28 @@ impl App {
                         Err(e) => self.say(e, Tone::Crit),
                     }
                 }
+                Job::Stored(account, name, done) => match done {
+                    Ok(()) => {
+                        if let Some(a) = self.accounts.iter_mut().find(|a| a.name == account) {
+                            match a.secrets.iter_mut().find(|x| x.name == name) {
+                                Some(x) => x.set = true,
+                                None => a.secrets.push(Secret { name: name.clone(), set: true }),
+                            }
+                        }
+                        self.say(format!("{name} is in the vault"), Tone::Ok);
+                    }
+                    Err(e) => self.say(e, Tone::Crit),
+                },
+                Job::Removed(account, name, done) => match done {
+                    Ok(()) => {
+                        if let Some(a) = self.accounts.iter_mut().find(|a| a.name == account) {
+                            a.secrets.retain(|x| x.name != name);
+                        }
+                        self.sel = self.sel.min(self.rows().len().saturating_sub(1));
+                        self.say(format!("box {name} emptied"), Tone::Info);
+                    }
+                    Err(e) => self.say(e, Tone::Crit),
+                },
             }
         }
         if let Some(clip) = self.clip.take_if(|c| c.at.elapsed() > SHOWN) {
@@ -177,6 +236,7 @@ impl App {
 
     fn refuse(&mut self, reason: String) {
         self.lock = Lock::Idle;
+        self.fun.refused();
         self.say(format!("still locked: {reason}"), Tone::Crit);
     }
 
@@ -285,9 +345,61 @@ impl App {
         match Clipboard::new().and_then(|mut c| c.set().exclude_from_history().text(value.clone())) {
             Ok(()) => {
                 self.say(format!("copied {name} · cleared in 30 s"), Tone::Ok);
+                self.spin = Some((name.clone(), Instant::now()));
                 self.clip = Some(Clip { name, value, at: Instant::now() });
             }
             Err(e) => self.say(format!("clipboard: {e}"), Tone::Crit),
+        }
+    }
+
+    /// Keys of the deposit and confirm dialogs.
+    fn dialog(&mut self, code: KeyCode) {
+        if let Mode::Confirm = self.mode {
+            self.mode = Mode::Browse;
+            if code == KeyCode::Char('y') {
+                self.write(None);
+            }
+            return;
+        }
+        let Mode::Deposit { name, value, naming } = &mut self.mode else { return };
+        let field = if *naming { &mut *name } else { &mut *value };
+        match code {
+            KeyCode::Esc => self.mode = Mode::Browse,
+            KeyCode::Backspace => _ = field.pop(),
+            KeyCode::Char(c) if *naming && (c.is_ascii_alphanumeric() || c == '_') => field.push(c.to_ascii_uppercase()),
+            KeyCode::Char(c) if !*naming => field.push(c),
+            KeyCode::Enter if *naming && vault::valid_name(name) => *naming = false,
+            KeyCode::Enter if *naming => self.say("a name is UPPERCASE_AND_DIGITS", Tone::Warn),
+            KeyCode::Enter if vault::valid_value(value) => {
+                let value = std::mem::take(value);
+                let name = std::mem::take(name);
+                self.mode = Mode::Browse;
+                self.write(Some((name, value)));
+            }
+            KeyCode::Enter => self.say("empty, or a quote, backslash or space: not stored", Tone::Warn),
+            _ => {}
+        }
+    }
+
+    /// Stores `(name, value)` in the current account, or empties the
+    /// selected box when `None`.
+    fn write(&mut self, deposit: Option<(String, String)>) {
+        let Some(account) = self.account().map(|a| a.name.clone()) else { return };
+        let tx = self.tx.clone();
+        match deposit {
+            Some((name, value)) => {
+                thread::spawn(move || {
+                    let done = vault::store(&account, &name, &value);
+                    tx.send(Job::Stored(account, name, done))
+                });
+            }
+            None => {
+                let Some(name) = self.selected().map(|s| s.name.clone()) else { return };
+                thread::spawn(move || {
+                    let done = vault::remove(&account, &name);
+                    tx.send(Job::Removed(account, name, done))
+                });
+            }
         }
     }
 }

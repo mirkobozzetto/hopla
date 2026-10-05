@@ -6,6 +6,7 @@ mod auth;
 mod lapla;
 mod pixel;
 mod sprites;
+mod surprise;
 mod ui;
 mod vault;
 
