@@ -38,7 +38,6 @@ const FINGERPRINT: [&str; 9] = [
     "    ▀▀▄▄▄▄▀▀▀▀    ",
 ];
 const MASK: &str = "••••••••••••";
-const GLYPHS: [char; 18] = ['▓', '▒', '░', '#', '%', '&', '@', '$', '*', '+', '=', '<', '>', '?', '/', '|', '§', '¤'];
 
 fn pulse(t: f32, speed: f32) -> f32 {
     ((t * speed).sin() + 1.0) / 2.0
@@ -54,33 +53,9 @@ fn spin(t: f32) -> char {
     SPIN[(t * 12.0) as usize % SPIN.len()]
 }
 
-fn scramble(i: usize, frame: usize) -> char {
-    let h = (i as u32).wrapping_mul(0x9e37_79b9) ^ (frame as u32).wrapping_mul(0x85eb_ca6b);
-    GLYPHS[((h ^ (h >> 13)).wrapping_mul(0x27d4_eb2f) >> 16) as usize % GLYPHS.len()]
-}
-
-/// The value cell: masked, being read, or decoding glyph by glyph.
+/// The value cell: always masked, a spinner while it is being copied.
 fn value(app: &App, account: &str, s: &Secret, t: f32) -> Vec<Span<'static>> {
-    let this = |a: &str, n: &str| a == account && n == s.name;
-    if let Some(r) = app.reveal.as_ref().filter(|r| this(&r.account, &r.name)) {
-        let age = r.at.elapsed().as_secs_f32();
-        return r
-            .value
-            .chars()
-            .enumerate()
-            .map(|(i, c)| {
-                let at = 0.25 + i as f32 * 0.02;
-                if age < at {
-                    Span::from(scramble(i, (t * 26.0) as usize).to_string()).fg(ACCENT2)
-                } else if age < at + 0.15 {
-                    Span::from(c.to_string()).fg(ACCENT).bold()
-                } else {
-                    Span::from(c.to_string()).fg(TEXT)
-                }
-            })
-            .collect();
-    }
-    if app.reading.as_ref().is_some_and(|(a, n)| this(a, n)) {
+    if app.reading.as_ref().is_some_and(|(a, n)| a == account && *n == s.name) {
         return vec![format!("reading the Keychain {}", spin(t)).fg(DIM)];
     }
     vec![if s.set { MASK.fg(DIM) } else { "-".fg(FAINT) }]
@@ -166,7 +141,7 @@ fn lock(f: &mut Frame, app: &App, area: Rect, t: f32) {
         Line::default()
     };
     lines.extend([Line::default(), Line::from(title.bold()), hint]);
-    lines.push(Line::from("values stay in the Keychain until revealed".fg(FAINT)));
+    lines.push(Line::from("values are copied, never shown".fg(FAINT)));
     // Lapla takes what the fingerprint leaves, up to 22 rows.
     let pet = area.height.saturating_sub(lines.len() as u16 + 4).min(22);
     let pet = if pet >= 12 { pet } else { 0 };
@@ -211,7 +186,7 @@ fn vault(f: &mut Frame, app: &App, area: Rect, t: f32) {
     secrets(f, app, mid, t);
     detail(f, app, right, t);
 
-    let keys = [("j/k", "move"), ("Tab", "panel"), ("/", "filter"), ("r", "reveal"), ("y", "copy"), ("L", "lock"), ("q", "quit")];
+    let keys = [("j/k", "move"), ("Tab", "panel"), ("/", "filter"), ("y", "copy"), ("L", "lock"), ("q", "quit")];
     let hints: Line = keys.iter().flat_map(|(k, what)| [k.fg(ACCENT), format!(" {what}   ").fg(DIM)]).collect();
     f.render_widget(Paragraph::new(hints), foot);
     let total: usize = app.accounts.iter().map(|a| a.secrets.len()).sum();
@@ -318,14 +293,8 @@ fn detail(f: &mut Frame, app: &App, area: Rect, t: f32) {
     };
     let frame = Block::bordered().border_type(BorderType::Rounded).border_style(BORDER).padding(Padding::horizontal(1));
     f.render_widget(Paragraph::new(shown).block(frame), vbox);
-    let revealed = app.reveal.as_ref().filter(|r| r.account == account.name && r.name == s.name);
-    let keys: Line = if let Some(r) = revealed {
-        let left = SHOWN.saturating_sub(r.at.elapsed());
-        let full = (left.as_secs_f32() / SHOWN.as_secs_f32() * 24.0).round() as usize;
-        let hides = format!("hides in {} s ", left.as_secs() + 1);
-        Line::from(vec![hides.fg(DIM), "█".repeat(full).fg(ACCENT2), "─".repeat(24 - full).fg(FAINT)])
-    } else if s.set {
-        Line::from(vec!["r".fg(ACCENT), " reveal   ".fg(DIM), "y".fg(ACCENT), " copy".fg(DIM)])
+    let keys: Line = if s.set {
+        Line::from(vec!["y".fg(ACCENT), " copy, never shown".fg(DIM)])
     } else {
         Line::from("not stored yet: run the command above".fg(DIM))
     };

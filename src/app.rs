@@ -38,22 +38,9 @@ pub enum Tone {
     Crit,
 }
 
-#[derive(Clone, Copy)]
-enum Use {
-    Reveal,
-    Copy,
-}
-
 enum Job {
     Loaded(Result<Vec<Account>, String>),
-    Value(Use, String, String, Result<Option<String>, String>),
-}
-
-pub struct Reveal {
-    pub account: String,
-    pub name: String,
-    pub value: String,
-    pub at: Instant,
+    Value(String, String, Result<Option<String>, String>),
 }
 
 /// A copied value. Dropping it, on time out or on exit, empties the
@@ -86,7 +73,6 @@ pub struct App {
     pub filter: String,
     pub filtering: bool,
     pub note: Option<(String, Tone, Instant)>,
-    pub reveal: Option<Reveal>,
     pub clip: Option<Clip>,
     pub reading: Option<(String, String)>,
     pub quit: bool,
@@ -112,7 +98,6 @@ impl App {
             filter: String::new(),
             filtering: false,
             note: None,
-            reveal: None,
             clip: None,
             reading: None,
             quit: false,
@@ -172,21 +157,15 @@ impl App {
                     self.loading = false;
                     self.say(e, Tone::Crit);
                 }
-                Job::Value(how, account, name, value) => {
+                Job::Value(account, name, value) => {
                     self.reading = None;
                     match value {
-                        Ok(Some(value)) if matches!(how, Use::Reveal) => {
-                            self.reveal = Some(Reveal { account, name, value, at: Instant::now() });
-                        }
                         Ok(Some(value)) => self.copy(name, value),
                         Ok(None) => self.say(format!("missing · hop secret set {name} {account}"), Tone::Warn),
                         Err(e) => self.say(e, Tone::Crit),
                     }
                 }
             }
-        }
-        if self.reveal.as_ref().is_some_and(|r| r.at.elapsed() > SHOWN) {
-            self.reveal = None;
         }
         if let Some(clip) = self.clip.take_if(|c| c.at.elapsed() > SHOWN) {
             self.say(format!("{} left the clipboard", clip.name), Tone::Info);
@@ -203,7 +182,6 @@ impl App {
 
     fn lock(&mut self) {
         self.lock = Lock::Idle;
-        self.reveal = None;
         self.fx = None;
     }
 
@@ -268,8 +246,7 @@ impl App {
             }
             KeyCode::Esc => self.filter.clear(),
             KeyCode::Enter if self.focus == Focus::Accounts => self.focus = Focus::Secrets,
-            KeyCode::Enter | KeyCode::Char('r') => self.fetch(Use::Reveal),
-            KeyCode::Char('y') => self.fetch(Use::Copy),
+            KeyCode::Char('y') => self.copy_selected(),
             KeyCode::Char('L') => self.lock(),
             _ => {}
         }
@@ -285,23 +262,19 @@ impl App {
         }
     }
 
-    /// `r` and `y` on the selected secret. A second `r` hides it again.
-    fn fetch(&mut self, how: Use) {
+    /// `y`: reads the selected secret off screen and copies it. A value is
+    /// never drawn, only copied.
+    fn copy_selected(&mut self) {
         let (Some(account), Some(secret)) = (self.account(), self.selected()) else { return };
         let (account, name, set) = (account.name.clone(), secret.name.clone(), secret.set);
         if !set {
             return self.say(format!("missing · hop secret set {name} {account}"), Tone::Warn);
         }
-        let shown = self.reveal.as_ref().is_some_and(|r| r.account == account && r.name == name);
-        if matches!(how, Use::Reveal) && shown {
-            self.reveal = None;
-            return;
-        }
         self.reading = Some((account.clone(), name.clone()));
         let tx = self.tx.clone();
         thread::spawn(move || {
             let value = vault::read(&account, &name);
-            tx.send(Job::Value(how, account, name, value))
+            tx.send(Job::Value(account, name, value))
         });
     }
 
