@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph};
 
 use crate::app::{App, Focus, Lock, Tone};
-use crate::vault::{self, Secret};
+use crate::vault;
 
 const BG: Color = Color::Rgb(0x0b, 0x0f, 0x0d);
 const PANEL: Color = Color::Rgb(0x0f, 0x15, 0x12);
@@ -117,4 +117,125 @@ fn vault(f: &mut Frame, app: &App, area: Rect, t: f32) {
     let total: usize = app.accounts.iter().map(|a| a.secrets.len()).sum();
     let count = format!("{total} secrets · {} accounts", app.accounts.len());
     f.render_widget(Paragraph::new(count.fg(DIM)).right_aligned(), foot);
+}
+
+fn accounts(f: &mut Frame, app: &App, area: Rect) {
+    let focus = app.focus == Focus::Accounts;
+    let block = panel("accounts".fg(if focus { ACCENT } else { DIM }), if focus { ACCENT } else { BORDER });
+    let inner = block.inner(area);
+    let width = usize::from(inner.width).saturating_sub(7);
+    let mut lines: Vec<Line> = app
+        .accounts
+        .iter()
+        .enumerate()
+        .map(|(i, a)| {
+            let selected = i == app.account;
+            let active = app.active.as_ref() == Some(&a.name);
+            let spans = vec![
+                (if selected { "▌" } else { " " }).fg(ACCENT),
+                (if active { "● " } else { "○ " }).fg(if active { ACCENT } else { DIM }),
+                format!("{:<width$.width$}", a.name).into(),
+                format!("{:>3}", a.secrets.len()).fg(DIM),
+            ];
+            row(spans, selected, inner.width)
+        })
+        .collect();
+    lines.extend([Line::default(), Line::from("● active account".fg(FAINT))]);
+    f.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+/// The name with the filter match lit, padded to `width`.
+fn lit(name: &str, filter: &str, width: usize) -> Vec<Span<'static>> {
+    let pad = " ".repeat(width.saturating_sub(name.len()));
+    // Names are ASCII, so lowercasing keeps byte offsets.
+    let Some(at) = name.to_lowercase().find(&filter.to_lowercase()).filter(|_| !filter.is_empty()) else {
+        return vec![name.to_owned().bold(), pad.into()];
+    };
+    let end = at + filter.len();
+    vec![name[..at].to_owned().bold(), name[at..end].to_owned().fg(BG).bg(ACCENT), name[end..].to_owned().bold(), pad.into()]
+}
+
+fn secrets(f: &mut Frame, app: &App, area: Rect, t: f32) {
+    let focus = app.focus == Focus::Secrets;
+    let name = app.account().map_or("", |a| a.name.as_str());
+    let block = panel(format!("secrets · {name}").fg(if focus { ACCENT } else { DIM }), if focus { ACCENT } else { BORDER });
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let rows = app.rows();
+    let mut lines = Vec::new();
+    if app.filtering || !app.filter.is_empty() {
+        let caret = if app.filtering && pulse(t, 8.0) > 0.5 { "▌" } else { " " };
+        let found = format!("  {} match", rows.len());
+        lines.push(Line::from(vec!["/ ".fg(ACCENT), app.filter.clone().into(), caret.fg(ACCENT), found.fg(DIM)]));
+    }
+    let width = rows.iter().map(|s| s.name.len()).max().unwrap_or(4).clamp(4, 32) + 2;
+    lines.push(Line::from(format!("    {:<width$}{:<9}VALUE", "NAME", "STATE").fg(FAINT)));
+    let room = usize::from(inner.height).saturating_sub(lines.len()).max(1);
+    let first = app.sel.saturating_sub(room - 1);
+    for (i, s) in rows.iter().enumerate().skip(first).take(room) {
+        let selected = i == app.sel;
+        let mut spans = vec![(if selected { "▌ " } else { "  " }).fg(ACCENT), "● ".fg(if s.set { ACCENT } else { WARN })];
+        spans.extend(lit(&s.name, &app.filter, width));
+        spans.push(format!("{:<9}", if s.set { "set" } else { "missing" }).fg(if s.set { DIM } else { WARN }));
+        spans.push(if s.set { MASK.fg(DIM) } else { "-".fg(FAINT) });
+        lines.push(row(spans, selected, inner.width));
+    }
+    let empty = if app.loading {
+        format!("reading the Keychain {}", spin(t))
+    } else if !app.filter.is_empty() {
+        "nothing matches · Esc clears".into()
+    } else {
+        format!("no secrets · hop secret set NAME {name}")
+    };
+    if rows.is_empty() {
+        lines.push(Line::from(empty.fg(DIM)));
+    }
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+fn detail(f: &mut Frame, app: &App, area: Rect) {
+    let (Some(account), Some(s)) = (app.account(), app.selected()) else {
+        return f.render_widget(panel("detail".fg(DIM), BORDER), area);
+    };
+    let block = panel(s.name.clone().fg(ACCENT2), BORDER);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let [info, label, vbox, hint] = Layout::vertical([Length(4), Length(1), Length(3), Length(1)]).areas(inner);
+    let state = if s.set { "● set".fg(ACCENT) } else { "● missing".fg(WARN) };
+    f.render_widget(
+        Paragraph::new(vec![
+            Line::from(vec!["account  ".fg(DIM), account.name.clone().into()]),
+            Line::from(vec!["service  ".fg(DIM), vault::service(&account.name, &s.name).into()]),
+            Line::from(vec!["state    ".fg(DIM), state]),
+        ]),
+        info,
+    );
+    f.render_widget(Paragraph::new("V A L U E".fg(DIM)), label);
+    let value = if s.set { MASK.fg(DIM) } else { format!("hop secret set {} {}", s.name, account.name).fg(ACCENT) };
+    let frame = Block::bordered().border_type(BorderType::Rounded).border_style(BORDER).padding(Padding::horizontal(1));
+    f.render_widget(Paragraph::new(value).block(frame), vbox);
+    let keys: Line = if s.set {
+        Line::from(vec!["r".fg(ACCENT), " reveal   ".fg(DIM), "y".fg(ACCENT), " copy".fg(DIM)])
+    } else {
+        Line::from("not stored yet: run the command above".fg(DIM))
+    };
+    f.render_widget(Paragraph::new(keys), hint);
+}
+
+fn note(f: &mut Frame, app: &App, area: Rect) {
+    let Some((text, tone, born)) = &app.note else { return };
+    let (mark, color) = match tone {
+        Tone::Ok => ("✓", ACCENT),
+        Tone::Info => ("i", INFO),
+        Tone::Warn => ("!", WARN),
+        Tone::Crit => ("✗", CRIT),
+    };
+    let width = (text.chars().count() as u16 + 6).min(area.width.saturating_sub(4));
+    // Slides in from the right edge for 0.3 s.
+    let slide = ((1.0 - born.elapsed().as_secs_f32() / 0.3).max(0.0) * f32::from(width)) as u16;
+    let x = area.right().saturating_sub(width + 2) + slide;
+    let r = Rect::new(x, area.bottom().saturating_sub(5), width - slide, 3).intersection(area);
+    f.render_widget(Clear, r);
+    let frame = Block::bordered().border_type(BorderType::Rounded).border_style(color).style(Style::new().bg(PANEL));
+    f.render_widget(Paragraph::new(Line::from(vec![format!(" {mark} ").fg(color), text.clone().into()])).block(frame), r);
 }

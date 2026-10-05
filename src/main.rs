@@ -3,31 +3,29 @@ compile_error!("hopla is macOS only");
 
 mod app;
 mod auth;
+mod ui;
 mod vault;
 
-fn main() {
-    if let Err(e) = auth::unlock().recv().unwrap_or_else(|_| Err("no answer".into())) {
-        eprintln!("locked: {e}");
-        std::process::exit(1);
-    }
-    match vault::load() {
-        Ok(accounts) => {
-            let active = vault::active();
-            for a in &accounts {
-                let mark = if active.as_deref() == Some(&a.name) { " (active)" } else { "" };
-                for s in &a.secrets {
-                    let state = match vault::read(&a.name, &s.name) {
-                        Ok(Some(v)) => format!("set, {} chars read", v.chars().count()),
-                        Ok(None) => "missing".into(),
-                        Err(e) => e,
-                    };
-                    println!("{}{mark}: {} {state}", a.name, s.name);
-                }
+use std::time::Duration;
+
+use ratatui::crossterm::event::{self, Event, KeyEventKind};
+
+const FRAME: Duration = Duration::from_millis(33);
+
+fn main() -> std::io::Result<()> {
+    let mut app = app::App::new();
+    // run() restores the terminal on return; its panic hook does it on a crash.
+    ratatui::run(|terminal| {
+        while !app.quit {
+            app.tick();
+            terminal.draw(|f| ui::draw(f, &app))?;
+            if event::poll(FRAME)?
+                && let Event::Key(key) = event::read()?
+                && key.kind == KeyEventKind::Press
+            {
+                app.key(key);
             }
         }
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::exit(1);
-        }
-    }
+        Ok(())
+    })
 }
