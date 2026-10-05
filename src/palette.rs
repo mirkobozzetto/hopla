@@ -83,7 +83,7 @@ pub fn items(accounts: &[Account], active: Option<&str>, query: &str) -> Vec<Ite
         let is_active = Some(a.name.as_str()) == active;
         all.push(Item::Account { name: a.name.clone(), active: is_active, secrets: a.secrets.len() });
         for s in &a.secrets {
-            all.push(Item::Secret { account: a.name.clone(), name: s.name.clone(), set: Some(s.set) });
+            all.push(Item::Secret { account: a.name.clone(), name: s.name.clone(), set: s.set });
         }
     }
     if query.is_empty() {

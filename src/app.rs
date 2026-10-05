@@ -196,8 +196,8 @@ impl App {
                     Ok(()) => {
                         if let Some(a) = self.accounts.iter_mut().find(|a| a.name == account) {
                             match a.secrets.iter_mut().find(|x| x.name == name) {
-                                Some(x) => x.set = true,
-                                None => a.secrets.push(Secret { name: name.clone(), set: true }),
+                                Some(x) => x.set = Some(true),
+                                None => a.secrets.push(Secret { name: name.clone(), set: Some(true) }),
                             }
                         }
                         self.say(format!("{name} is in the vault"), Tone::Ok);
@@ -340,7 +340,7 @@ impl App {
     /// never drawn, only copied.
     fn copy_selected(&mut self) {
         let (Some(account), Some(secret)) = (self.account(), self.selected()) else { return };
-        let (account, name, set) = (account.name.clone(), secret.name.clone(), secret.set);
+        let (account, name, set) = (account.name.clone(), secret.name.clone(), secret.set == Some(true));
         if !set {
             return self.say(format!("missing · hop secret set {name} {account}"), Tone::Warn);
         }

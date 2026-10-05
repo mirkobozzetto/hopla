@@ -127,13 +127,13 @@ fn room(f: &mut Frame, app: &App, area: Rect, t: f32) {
     scene::wall(&mut cv, false);
     let room_name = app.account().map_or("", |a| a.name.as_str());
     let sign = |name: &str| format!("VAULT · {}", name.to_uppercase());
-    let shown: Vec<(&str, bool)> = app.rows().iter().map(|s| (s.name.as_str(), s.set)).collect();
+    let shown: Vec<(&str, bool)> = app.rows().iter().map(|s| (s.name.as_str(), s.set == Some(true))).collect();
     let travel = app.travel.as_ref().map(|tr| (tr, tr.at.elapsed().as_secs_f32() / TRAVEL)).filter(|(_, p)| *p < 1.0);
     let flip = since(app.fun.flip, 1.0);
     let mut labels = Vec::new();
     if let Some((tr, p)) = travel {
         let from = &app.accounts[tr.from];
-        let old: Vec<(&str, bool)> = from.secrets.iter().map(|s| (s.name.as_str(), s.set)).collect();
+        let old: Vec<(&str, bool)> = from.secrets.iter().map(|s| (s.name.as_str(), s.set == Some(true))).collect();
         let w = cv.w as f32;
         labels.extend(scene::shelf(&mut cv, (-tr.dir as f32 * p * w) as i32, &sign(&from.name), &old, None, false, t));
         labels.extend(scene::shelf(&mut cv, (tr.dir as f32 * (1.0 - p) * w) as i32, &sign(room_name), &shown, None, false, t));
@@ -239,7 +239,7 @@ fn details(f: &mut Frame, app: &App, area: Rect, t: f32) {
         None if !app.filter.is_empty() => vec![Line::from("nothing matches · Esc clears the search".fg(DIM))],
         None => vec![Line::from(format!("no box in room {room} · n adds one").fg(DIM))],
         Some(s) => {
-            let (mark, state) = if s.set { ("▣ ".fg(GOLD), "  in the vault · y copies it, never shows it") } else { ("✕ ".fg(RED), "  empty box · Enter puts a value in it") };
+            let (mark, state) = if s.set == Some(true) { ("▣ ".fg(GOLD), "  in the vault · y copies it, never shows it") } else { ("✕ ".fg(RED), "  empty box · Enter puts a value in it") };
             vec![
                 Line::from(vec![mark, s.name.clone().fg(WHITE).bold(), state.fg(DIM)]),
                 Line::from(format!("room {room} · {}", crate::vault::service(room, &s.name)).fg(FAINT)),

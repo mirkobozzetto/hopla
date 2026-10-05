@@ -19,7 +19,8 @@ const NOT_FOUND: i32 = 44;
 
 pub struct Secret {
     pub name: String,
-    pub set: bool,
+    /// `None` until the Keychain has been asked.
+    pub set: Option<bool>,
 }
 
 pub struct Account {
@@ -62,8 +63,8 @@ fn profile(account: &str) -> PathBuf {
     profiles_dir().join(format!("{account}.gitconfig"))
 }
 
-/// Every account with its declared secrets, each marked set or missing like
-/// `hop secret list <account>`. Values are not read here.
+/// Every account with the names of its secrets, from the profiles only:
+/// fast, the Keychain is asked afterwards with `exists`.
 pub fn load() -> Result<Vec<Account>, String> {
     let dir = profiles_dir();
     let entries = std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -76,10 +77,7 @@ pub fn load() -> Result<Vec<Account>, String> {
         .iter()
         .map(|file| {
             let name = file.file_stem().unwrap_or_default().to_string_lossy().into_owned();
-            let secrets = git_config(file, &["--get-all", "env.var"])
-                .into_iter()
-                .map(|var| Ok(Secret { set: exists(&name, &var)?, name: var }))
-                .collect::<Result<_, String>>()?;
+            let secrets = git_config(file, &["--get-all", "env.var"]).into_iter().map(|var| Secret { name: var, set: None }).collect();
             Ok(Account { name, secrets })
         })
         .collect()
@@ -111,7 +109,8 @@ fn find(account: &str, name: &str, value: bool) -> Result<Option<String>, String
     }
 }
 
-fn exists(account: &str, name: &str) -> Result<bool, String> {
+/// Set or missing, like `hop secret list`, without reading the value.
+pub fn exists(account: &str, name: &str) -> Result<bool, String> {
     find(account, name, false).map(|found| found.is_some())
 }
 
