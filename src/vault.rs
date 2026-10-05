@@ -35,7 +35,7 @@ fn profiles_dir() -> PathBuf {
     env::var_os("HOP_PROFILES").map_or_else(|| home().join(".config/hop"), PathBuf::from)
 }
 
-fn service(account: &str, name: &str) -> String {
+pub fn service(account: &str, name: &str) -> String {
     let prefix = env::var("HOP_KEYCHAIN_PREFIX").unwrap_or_else(|_| "hop".into());
     format!("{prefix}:{account}:{name}")
 }
