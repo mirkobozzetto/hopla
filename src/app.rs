@@ -14,8 +14,8 @@ use crate::vault::{self, Account, Secret};
 const NOTE_TTL: Duration = Duration::from_millis(3500);
 pub const SHOWN: Duration = Duration::from_secs(30);
 const IDLE: Duration = Duration::from_secs(5 * 60);
-// Time the lock screen shows its check mark before the vault.
-const PASSED: Duration = Duration::from_millis(550);
+// Time the lock screen shows its check mark, and Lapla flips, before the vault.
+const PASSED: Duration = Duration::from_millis(900);
 
 #[derive(PartialEq)]
 pub enum Focus {

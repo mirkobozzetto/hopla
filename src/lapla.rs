@@ -28,6 +28,7 @@ const WHISKER: Rgb = hex(0xe6e1d7);
 const GRASS: Rgb = hex(0x3f7a52);
 const SOIL_TOP: Rgb = hex(0x2c4a36);
 const SOIL: Rgb = hex(0x0a120d);
+const SPARKS: [Rgb; 5] = [hex(0xffd166), hex(0x3ddc97), hex(0xa78bfa), hex(0xf472b6), hex(0x5ccfe6)];
 const BUBBLE: Color = Color::Rgb(0xd6, 0xe4, 0xdc);
 const SAYS: Color = Color::Rgb(0x3d, 0xdc, 0x97);
 
@@ -81,10 +82,11 @@ fn pose(mood: &Mood, t: f32) -> Pose {
             p.nose = (t * 30.0).sin() * 0.5;
         }
         Mood::Cheer(age) => {
-            let q = (age / 0.55).min(1.0);
-            (p.y, p.squash, p.spin, p.blink) = (10.0 * (PI * q).sin(), 1.0, TAU * q, false);
+            // A back flip over the time the lock screen shows its check mark.
+            let q = (age / 0.9).min(1.0);
+            (p.y, p.squash, p.spin, p.blink) = (20.0 * (PI * q).sin(), 1.0, -TAU * q, false);
         }
-        Mood::Sad => (p.y, p.squash, p.perk, p.look, p.blink) = (0.0, 1.0, 0.9, 0.6, true),
+        Mood::Sad => (p.y, p.squash, p.perk, p.look, p.blink) = (0.0, 1.0, -1.0, 0.6, true),
     }
     p
 }
@@ -159,7 +161,7 @@ pub fn render(f: &mut Frame, area: Rect, mood: Mood, t: f32) {
         let blade = (2.0 + f32::from(col * 7 % 3)) * (0.8 + 0.2 * (t * 2.0 + f32::from(col)).sin());
         let mut c = if cy >= gy {
             Some(mix(mix(SOIL_TOP, SOIL, (cy - gy) / 3.0), BG, edge))
-        } else if col % 3 == 0 && cy >= gy - blade {
+        } else if col.is_multiple_of(3) && cy >= gy - blade {
             Some(mix(GRASS, BG, edge))
         } else {
             None
@@ -168,7 +170,21 @@ pub fn render(f: &mut Frame, area: Rect, mood: Mood, t: f32) {
         tint(&mut c, inside(wx, wy, [0.0, 0.6, 14.0 * rise, 2.4 * rise]), [0.0; 3], 0.55 * rise);
         let (lx, ly) = (wx * p.squash.sqrt(), (wy + p.y) / p.squash + 12.0);
         let (lx, ly) = (lx * p.spin.cos() + ly * p.spin.sin(), -lx * p.spin.sin() + ly * p.spin.cos() - 12.0);
-        bunny(lx, ly, &p, 1.0 / s).or(c).unwrap_or(BG)
+        if let Some(fur) = bunny(lx, ly, &p, 1.0 / s) {
+            return fur;
+        }
+        if let Mood::Cheer(age) = mood {
+            // Confetti bursting from the head, falling as it fades.
+            for i in 0..18 {
+                let a = i as f32 * TAU / 18.0 + 0.3;
+                let v = 16.0 + (i * 7 % 5) as f32 * 5.0;
+                let (sx, sy) = (7.0 + a.cos() * v * age, -22.0 - p.y + a.sin() * v * age + 30.0 * age * age);
+                if (wx - sx).hypot(wy - sy) < 0.7 / s {
+                    return mix(SPARKS[i % SPARKS.len()], BG, (age - 0.4) / 0.5);
+                }
+            }
+        }
+        c.unwrap_or(BG)
     };
     let rgb = |c: Rgb| Color::Rgb(c[0] as u8, c[1] as u8, c[2] as u8);
     let lines: Vec<Line> = (0..area.height)
@@ -177,7 +193,7 @@ pub fn render(f: &mut Frame, area: Rect, mood: Mood, t: f32) {
     let sprite = Rect { x: area.x + (area.width - w) / 2, width: w, ..area };
     f.render_widget(Paragraph::new(lines), sprite);
 
-    let says = match mood {
+    let says = match &mood {
         Mood::Idle => return,
         Mood::Sniff => "sniff sniff...",
         Mood::Cheer(_) => "hopla !",
@@ -190,6 +206,9 @@ pub fn render(f: &mut Frame, area: Rect, mood: Mood, t: f32) {
         Line::from(format!("╰─┬{}╯", &bar[3..]).fg(BUBBLE)),
         Line::from("  ╵".fg(BUBBLE)),
     ];
-    let at = Rect::new(sprite.right().saturating_sub(w / 4), area.y, bar.chars().count() as u16 + 2, 4);
+    // The tail points at the top of the head.
+    let col = sprite.x + (gx + 13.0 * s) as u16;
+    let row = area.y + ((gy - (29.0 + p.y) * s) / 2.0).max(4.0) as u16;
+    let at = Rect::new(col.saturating_sub(2), row - 4, bar.chars().count() as u16 + 2, 4);
     f.render_widget(Paragraph::new(bubble), at.intersection(f.area()));
 }
