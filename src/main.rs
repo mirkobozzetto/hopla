@@ -18,7 +18,7 @@ fn main() -> std::io::Result<()> {
     ratatui::run(|terminal| {
         while !app.quit {
             app.tick();
-            terminal.draw(|f| ui::draw(f, &app))?;
+            terminal.draw(|f| ui::draw(f, &mut app))?;
             if event::poll(FRAME)?
                 && let Event::Key(key) = event::read()?
                 && key.kind == KeyEventKind::Press

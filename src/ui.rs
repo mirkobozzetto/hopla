@@ -1,5 +1,7 @@
 //! Drawing, in the forest palette of draft/hop-ui.html.
 
+use std::time::Instant;
+
 use ratatui::Frame;
 use ratatui::layout::{Constraint::*, Flex, Layout, Margin, Rect};
 use ratatui::style::{Color, Style, Stylize};
@@ -23,6 +25,19 @@ const INFO: Color = Color::Rgb(0x5c, 0xcf, 0xe6);
 const SEL: Color = Color::Rgb(0x15, 0x22, 0x1c);
 const SPIN: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const LOGO: [&str; 2] = ["█▄▄ ▄▀▄ █▀▄ █   ▄▀▄", "█ █ ▀▄▀ █▀  █▄▄ █▀█"];
+const FUR: Color = Color::Rgb(0xf4, 0xef, 0xe4);
+const PINK: Color = Color::Rgb(0xff, 0x9f, 0xb8);
+const FINGERPRINT: [&str; 9] = [
+    "    ▄▄▀▀▀▀▀▀▄▄    ",
+    "  ▄▀  ▄▀▀▀▀▄  ▀▄  ",
+    " █  ▄▀ ▄▀▀▄ ▀▄  █ ",
+    "█  █  █ ▄▄ █  █  █",
+    "█  █  █ █  █  █  █",
+    "█  ▀▄ ▀▄▀  █  █  █",
+    " █  ▀▄    ▄▀ ▄▀  █ ",
+    "  ▀▄  ▀▀▀▀ ▄▀  ▄▀ ",
+    "    ▀▀▄▄▄▄▀▀▀▀    ",
+];
 const MASK: &str = "••••••••••••";
 const GLYPHS: [char; 18] = ['▓', '▒', '░', '#', '%', '&', '@', '$', '*', '+', '=', '<', '>', '?', '/', '|', '§', '¤'];
 
@@ -90,27 +105,90 @@ fn row(mut spans: Vec<Span<'static>>, selected: bool, width: u16) -> Line<'stati
     Line::from(spans).bg(SEL)
 }
 
-pub fn draw(f: &mut Frame, app: &App) {
+pub fn draw(f: &mut Frame, app: &mut App) {
     let t = app.start.elapsed().as_secs_f32();
     let area = f.area();
     f.render_widget(Block::new().style(Style::new().bg(BG).fg(TEXT)), area);
     if matches!(app.lock, Lock::Open) {
         vault(f, app, area.inner(Margin::new(2, 1)), t);
+        if let Some((effect, last)) = &mut app.fx {
+            effect.process(last.elapsed().into(), f.buffer_mut(), area);
+            *last = Instant::now();
+        }
+        if app.fx.as_ref().is_some_and(|(effect, _)| effect.done()) {
+            app.fx = None;
+        }
     } else {
         lock(f, app, area, t);
     }
     note(f, app, area);
 }
 
-fn lock(f: &mut Frame, app: &App, area: Rect, t: f32) {
-    let title = match app.lock {
-        Lock::Scan(..) => format!("waiting for Touch ID {}", spin(t)),
-        _ => "hop is locked".into(),
+/// Lapla, the hop bunny: hops, blinks, watches the scan, cheers.
+fn lapla(app: &App, t: f32) -> Vec<Line<'static>> {
+    let refused = app.note.as_ref().is_some_and(|n| matches!(n.1, Tone::Crit));
+    let (eyes, says) = match app.lock {
+        Lock::Done(_) => ("^   ^", "hopla!"),
+        Lock::Scan(..) => ("o   o", "sniff sniff..."),
+        _ if refused => (";   ;", "no keys, then"),
+        _ if t % 4.1 < 0.15 => ("-   -", ""),
+        _ => ("•   •", ""),
     };
-    let lines = vec![
-        Line::from(title).bold(),
-        Line::from(vec!["Touch ID · ".fg(DIM), "Enter".fg(ACCENT), " · q quits".fg(DIM)]),
+    // Every art line is 13 cells, framed by two 16-cell margins so the
+    // bunny stays centred whatever the bubble says.
+    let side = " ".repeat(16);
+    let art = |spans: Vec<Span<'static>>, bubble: &str| {
+        let mut line = vec![side.clone().into()];
+        line.extend(spans);
+        line.push(format!("{bubble:<16}").fg(ACCENT2));
+        Line::from(line)
+    };
+    let mut lines = vec![
+        art(vec!["  (\\     /)  ".fg(FUR)], ""),
+        art(vec!["   \\\\   //   ".fg(FUR)], ""),
+        art(vec!["  ( ".fg(FUR), eyes.fg(ACCENT), " )  ".fg(FUR)], says),
+        art(vec![" =(   ".fg(FUR), "w".fg(PINK), "   )= ".fg(FUR)], ""),
+        art(vec!["   (\")_(\")   ".fg(FUR)], ""),
     ];
+    let hop = matches!(app.lock, Lock::Done(_)) || t % 2.6 < 0.3;
+    lines.insert(if hop { 5 } else { 0 }, Line::default());
+    lines.push(Line::from("─────────────".fg(FAINT)));
+    lines
+}
+
+fn lock(f: &mut Frame, app: &App, area: Rect, t: f32) {
+    let done = matches!(app.lock, Lock::Done(_));
+    let scan = match &app.lock {
+        Lock::Scan(at, _) => Some(at.elapsed().as_secs_f32() / 1.2 % 1.0),
+        _ => None,
+    };
+    let n = (FINGERPRINT.len() - 1) as f32;
+    let print = FINGERPRINT.iter().enumerate().map(|(r, row)| {
+        let level = (n - r as f32) / n;
+        let color = match scan {
+            _ if done => ACCENT,
+            Some(p) if (level - p).abs() < 0.1 => Color::White,
+            Some(p) if level <= p => ACCENT,
+            _ => mix(FAINT, DIM, pulse(t - r as f32 * 0.12, 2.2)),
+        };
+        Line::from(row.fg(color))
+    });
+    let title = if done {
+        "✓ unlocked".fg(ACCENT)
+    } else if scan.is_some() {
+        format!("reading fingerprint {}", spin(t)).into()
+    } else {
+        "hop is locked".into()
+    };
+    let hint = if scan.is_none() && !done {
+        Line::from(vec!["Touch ID · ".fg(DIM), "Enter".fg(ACCENT), "   q quits".fg(FAINT)])
+    } else {
+        Line::default()
+    };
+    let mut lines = if area.height >= 24 { lapla(app, t) } else { Vec::new() };
+    lines.push(Line::default());
+    lines.extend(print);
+    lines.extend([Line::default(), Line::from(title.bold()), hint]);
     let [mid] = Layout::vertical([Length(lines.len() as u16)]).flex(Flex::Center).areas(area);
     f.render_widget(Paragraph::new(lines).centered(), mid);
 }
@@ -149,7 +227,7 @@ fn vault(f: &mut Frame, app: &App, area: Rect, t: f32) {
     secrets(f, app, mid, t);
     detail(f, app, right, t);
 
-    let keys = [("j/k", "move"), ("Tab", "panel"), ("/", "filter"), ("r", "reveal"), ("y", "copy"), ("q", "quit")];
+    let keys = [("j/k", "move"), ("Tab", "panel"), ("/", "filter"), ("r", "reveal"), ("y", "copy"), ("L", "lock"), ("q", "quit")];
     let hints: Line = keys.iter().flat_map(|(k, what)| [k.fg(ACCENT), format!(" {what}   ").fg(DIM)]).collect();
     f.render_widget(Paragraph::new(hints), foot);
     let total: usize = app.accounts.iter().map(|a| a.secrets.len()).sum();
