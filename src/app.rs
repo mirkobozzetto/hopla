@@ -6,12 +6,16 @@ use std::time::{Duration, Instant};
 
 use arboard::{Clipboard, SetExtApple};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use tachyonfx::{Effect, Interpolation, fx};
 
 use crate::auth;
 use crate::vault::{self, Account, Secret};
 
 const NOTE_TTL: Duration = Duration::from_millis(3500);
 pub const SHOWN: Duration = Duration::from_secs(30);
+const IDLE: Duration = Duration::from_secs(5 * 60);
+// Time the lock screen shows its check mark before the vault.
+const PASSED: Duration = Duration::from_millis(550);
 
 #[derive(PartialEq)]
 pub enum Focus {
@@ -22,6 +26,7 @@ pub enum Focus {
 pub enum Lock {
     Idle,
     Scan(Instant, Receiver<Result<(), String>>),
+    Done(Instant),
     Open,
 }
 
@@ -85,6 +90,9 @@ pub struct App {
     pub clip: Option<Clip>,
     pub reading: Option<(String, String)>,
     pub quit: bool,
+    /// The unlock effect and when it last ran.
+    pub fx: Option<(Effect, Instant)>,
+    last_key: Instant,
     tx: Sender<Job>,
     rx: Receiver<Job>,
 }
@@ -108,6 +116,8 @@ impl App {
             clip: None,
             reading: None,
             quit: false,
+            fx: None,
+            last_key: Instant::now(),
             tx,
             rx,
         }
@@ -136,11 +146,20 @@ impl App {
     pub fn tick(&mut self) {
         if let Lock::Scan(_, rx) = &self.lock {
             match rx.try_recv() {
-                Ok(Ok(())) => self.open(),
+                Ok(Ok(())) => self.lock = Lock::Done(Instant::now()),
                 Ok(Err(e)) => self.refuse(e),
                 Err(TryRecvError::Disconnected) => self.refuse("no answer".into()),
                 Err(TryRecvError::Empty) => {}
             }
+        }
+        if let Lock::Done(at) = self.lock
+            && at.elapsed() > PASSED
+        {
+            self.open();
+        }
+        if matches!(self.lock, Lock::Open) && self.last_key.elapsed() > IDLE {
+            self.lock();
+            self.say("locked after 5 min without a key", Tone::Info);
         }
         while let Ok(job) = self.rx.try_recv() {
             match job {
@@ -182,8 +201,16 @@ impl App {
         self.say(format!("still locked: {reason}"), Tone::Crit);
     }
 
+    fn lock(&mut self) {
+        self.lock = Lock::Idle;
+        self.reveal = None;
+        self.fx = None;
+    }
+
     fn open(&mut self) {
         self.lock = Lock::Open;
+        self.last_key = Instant::now();
+        self.fx = Some((fx::coalesce((600, Interpolation::QuadOut)), Instant::now()));
         self.say("unlocked · L locks again", Tone::Ok);
         if self.accounts.is_empty() && !self.loading {
             self.loading = true;
@@ -193,6 +220,7 @@ impl App {
     }
 
     pub fn key(&mut self, key: KeyEvent) {
+        self.last_key = Instant::now();
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.quit = true;
             return;
@@ -242,6 +270,7 @@ impl App {
             KeyCode::Enter if self.focus == Focus::Accounts => self.focus = Focus::Secrets,
             KeyCode::Enter | KeyCode::Char('r') => self.fetch(Use::Reveal),
             KeyCode::Char('y') => self.fetch(Use::Copy),
+            KeyCode::Char('L') => self.lock(),
             _ => {}
         }
     }
