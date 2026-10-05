@@ -4,7 +4,7 @@
 use std::f32::consts::TAU;
 
 use crate::pixel::{Canvas, Rgb, hex, mix, pal};
-use crate::sprites::{self, Eyes, LAPLA_H};
+use crate::sprites::{self, Eyes, LAPLA_H, LAPLA_W};
 
 pub const NIGHT: Rgb = hex(0x0c0c1e);
 const WALL: Rgb = hex(0x1c1c3c);
@@ -124,6 +124,133 @@ pub fn door(cv: &mut Canvas, cx: i32, cy: i32, r: i32, turn: f32, open: f32, bea
             for (dx, dy) in [(-8, -3), (-10, -5), (8, -3), (10, -5), (0, -8), (0, -10)] {
                 cv.rect(cx + dx, fy + dy, 1, 1, c('Y'));
             }
+        }
+    }
+}
+
+pub const BOX_W: i32 = 26;
+const BOX_H: i32 = 10;
+const LANE: i32 = 3 + LAPLA_W + 8;
+
+/// A box name to write over the canvas, in cells.
+pub struct Label {
+    pub col: i32,
+    pub row: i32,
+    pub text: String,
+    pub fg: Rgb,
+}
+
+/// One deposit box with its top left at (x, y), y even so its two text
+/// rows fall on cells: steel, a name plate and a gold handle when `full`,
+/// an open dark hole when not.
+fn deposit_box(cv: &mut Canvas, x: i32, y: i32, full: bool, frame: Rgb) {
+    cv.rect(x, y, BOX_W, BOX_H, frame);
+    let (w, h) = (BOX_W - 2, BOX_H - 2);
+    if full {
+        cv.rect(x + 1, y + 1, w, h, c('s'));
+        cv.rect(x + 1, y + 1, w, 1, c('w'));
+        cv.rect(x + 1, y + h, w, 1, c('S'));
+        cv.rect(x + 2, y + 2, w - 4, 2, c('g'));
+        cv.rect(x + w / 2 - 3, y + 6, 8, 1, c('y'));
+        cv.rect(x + w / 2 - 3, y + 7, 8, 1, c('o'));
+        cv.rect(x + w - 2, y + 5, 1, 2, c('k'));
+    } else {
+        cv.rect(x + 1, y + 1, w, h, c('k'));
+        cv.rect(x + 4, y + 2, w - 4, h - 2, c('d'));
+        cv.rect(x + 1, y + 1, 2, h, c('S'));
+        cv.rect(x + 3, y + 1, 1, h, c('G'));
+    }
+}
+
+/// A marble pillar with a gold capital, `w` wide, from `top` to the floor.
+fn pillar(cv: &mut Canvas, x: i32, top: i32, w: i32) {
+    let ground = cv.h - FLOOR;
+    cv.rect(x - 1, top, w + 2, 3, c('y'));
+    cv.rect(x - 1, top + 2, w + 2, 1, c('o'));
+    cv.rect(x, top + 3, w, ground - top - 5, c('g'));
+    cv.rect(x + 1, top + 3, 1, ground - top - 5, c('w'));
+    cv.rect(x + w - 1, top + 3, 1, ground - top - 5, c('G'));
+    cv.rect(x - 1, ground - 2, w + 2, 2, c('G'));
+}
+
+/// The wall of boxes of one room, shifted `dx` pixels, `sel` lit in gold.
+/// Returns the names and numbers to write over it.
+pub fn shelf(cv: &mut Canvas, dx: i32, boxes: &[(&str, bool)], sel: Option<usize>, lit_all: bool, t: f32) -> Vec<Label> {
+    pillar(cv, LANE - 6 + dx, 0, 4);
+    let cols = ((cv.w - LANE - 2) / (BOX_W + 2)).max(1);
+    let rows = ((cv.h - FLOOR - 4) / (BOX_H + 2)).max(1);
+    // Scroll by whole rows to keep the selected box on the wall.
+    let first = sel.map_or(0, |s| (s as i32 / cols - rows + 1).max(0)) * cols;
+    let shown = (boxes.len() as i32 - first).clamp(1, cols * rows);
+    let used = (shown + cols - 1) / cols * (BOX_H + 2);
+    // Centred on the wall, on an even row so names land on cells.
+    let top = ((cv.h - FLOOR - used) / 2).max(2) & !1;
+    let blink = (t * 3.0) as i32 % 2 == 0;
+    let mut labels = Vec::new();
+    for (i, (name, full)) in boxes.iter().enumerate().skip(first as usize).take(shown as usize) {
+        let k = i as i32 - first;
+        let (x, y) = (LANE + dx + (k % cols) * (BOX_W + 2), top + (k / cols) * (BOX_H + 2));
+        let lit = lit_all || sel == Some(i);
+        deposit_box(cv, x, y, *full, if lit { c(if blink { 'y' } else { 'Y' }) } else { c('k') });
+        let text: String = name.chars().take((BOX_W - 5) as usize).collect();
+        let (fg, number) = if *full { (c('k'), format!("No {:02}", i + 1)) } else { (c('g'), "empty".into()) };
+        labels.push(Label { col: x + 2, row: y / 2 + 1, text, fg });
+        labels.push(Label { col: x + 2, row: y / 2 + 2, text: number, fg: if *full { c('o') } else { c('G') } });
+    }
+    labels
+}
+
+/// The coins of the Konami rain, `age` seconds in.
+pub fn rain(cv: &mut Canvas, age: f32) {
+    let ground = cv.h - FLOOR;
+    for i in 0..28 {
+        let start = (i * 37 % 100) as f32 / 100.0 * 1.6;
+        let fall = age - start;
+        if fall < 0.0 {
+            continue;
+        }
+        let x = (i * 53 % 97) as f32 / 97.0 * (cv.w - 8) as f32;
+        let y = (fall * fall * 60.0 - 8.0).min((ground - 8) as f32);
+        let frame = [0, 1, 2, 1][((age * 10.0) as usize + i as usize) % 4];
+        cv.sprite(x as i32, y as i32, &sprites::COIN[frame], false, 0);
+    }
+}
+
+/// What Lapla does in the vault room.
+pub enum Pose {
+    Stand { blink: bool, tip: bool },
+    Walk { step: bool, left: bool },
+    Sleep,
+    /// Just woken up, 0 to 1.
+    Startle(f32),
+    /// Typing "hopla": a flip, 0 to 1.
+    Flip(f32),
+    /// Coins raining: hopping at this phase.
+    Cheer(f32),
+}
+
+/// Lapla in his lane at the left of the room.
+pub fn host(cv: &mut Canvas, pose: &Pose) {
+    let ground = cv.h - FLOOR;
+    let x = 3;
+    match *pose {
+        Pose::Stand { blink, tip } => {
+            lapla(cv, x, ground, if blink { Eyes::Shut } else { Eyes::Open }, None, if tip { 3 } else { 0 }, false)
+        }
+        Pose::Walk { step, left } => lapla(cv, x, ground - i32::from(step), Eyes::Open, Some(step), 0, left),
+        Pose::Sleep => {
+            cv.sprite(x + 3, ground - sprites::NOTES.len() as i32, &sprites::NOTES, false, 0);
+            lapla(cv, x, ground - 7, Eyes::Shut, None, 0, false);
+        }
+        Pose::Startle(q) => lapla(cv, x, ground - (8.0 * (q * TAU / 2.0).sin()) as i32, Eyes::Open, None, 4, false),
+        Pose::Cheer(phase) => lapla(cv, x, ground - (5.0 * phase.sin().abs()) as i32, Eyes::Happy, None, 0, false),
+        Pose::Flip(q) => {
+            let rows = sprites::lapla(Eyes::Happy, None);
+            let lift = (16.0 * (q * TAU / 2.0).sin()) as i32;
+            let turn = (q * 4.0) as u8 % 4;
+            // A quarter turn lays him on his side: centre the turned sprite.
+            let (w, h) = if turn % 2 == 0 { (LAPLA_W, LAPLA_H) } else { (LAPLA_H, LAPLA_W) };
+            cv.sprite(x + (LAPLA_W - w) / 2, ground - h - lift, &rows, false, turn);
         }
     }
 }
