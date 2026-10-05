@@ -92,7 +92,7 @@ fn lock(f: &mut Frame, app: &App, area: Rect, t: f32) {
     let rows = (h / 2) as u16;
     let [pic, _, text] = Layout::vertical([Length(rows), Length(1), Length(lines.len() as u16)]).flex(Flex::Center).areas(area);
     let mut cv = Canvas::new(w as u16, rows);
-    let sprite = if big { sprites::lapla(eyes, None) } else { sprites::mini(eyes) };
+    let sprite = if big { sprites::lapla(eyes) } else { sprites::mini(eyes) };
     // Hides when the alarm rings: only his ears and hat peek out.
     let sink = if alarm { h / 2 } else { 0 };
     let shake = i32::from(refused) * ((t * 20.0) as i32 % 2);

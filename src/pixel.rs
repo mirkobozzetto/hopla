@@ -70,31 +70,6 @@ impl Canvas {
         }
     }
 
-    pub fn rect(&mut self, x: i32, y: i32, w: i32, h: i32, c: Rgb) {
-        for yy in y..y + h {
-            for xx in x..x + w {
-                self.set(xx, yy, c);
-            }
-        }
-    }
-
-    /// Paints every pixel of the disc of radius `r` with `paint(dx, dy)`,
-    /// where (dx, dy) is the offset from the centre; `None` leaves it.
-    pub fn disc(&mut self, cx: f32, cy: f32, r: f32, paint: impl Fn(f32, f32) -> Option<Rgb>) {
-        let (x0, x1) = ((cx - r).floor() as i32, (cx + r).ceil() as i32);
-        let (y0, y1) = ((cy - r).floor() as i32, (cy + r).ceil() as i32);
-        for y in y0..=y1 {
-            for x in x0..=x1 {
-                let (dx, dy) = (x as f32 + 0.5 - cx, y as f32 + 0.5 - cy);
-                if dx.hypot(dy) <= r
-                    && let Some(c) = paint(dx, dy)
-                {
-                    self.set(x, y, c);
-                }
-            }
-        }
-    }
-
     /// Draws a sprite with its top left at (x, y), mirrored when `flip`,
     /// turned by `turn` quarter turns clockwise.
     pub fn sprite(&mut self, x: i32, y: i32, rows: &[&str], flip: bool, turn: u8) {
@@ -116,17 +91,6 @@ impl Canvas {
         }
     }
 
-    /// Copies the drawn pixels of `other` with its top left at (x, y).
-    pub fn blit(&mut self, other: &Canvas, x: i32, y: i32) {
-        for j in 0..other.h {
-            for i in 0..other.w {
-                if let Some(c) = other.get(i, j) {
-                    self.set(x + i, y + j, c);
-                }
-            }
-        }
-    }
-
     /// Puts the canvas on screen at `area`, `bg` where nothing was drawn.
     pub fn draw(&self, buf: &mut Buffer, area: Rect, bg: Rgb) {
         for row in 0..area.height.min((self.h / 2) as u16) {
@@ -136,20 +100,6 @@ impl Canvas {
                 let bottom = self.get(x, y + 1).unwrap_or(bg);
                 buf[(area.x + col, area.y + row)].set_symbol("▀").set_fg(color(top)).set_bg(color(bottom));
             }
-        }
-    }
-
-    /// Writes text over the drawn canvas, on the colour of the cells it
-    /// covers. `col` and `row` count cells from the top left of `area`.
-    pub fn text(&self, buf: &mut Buffer, area: Rect, col: i32, row: i32, text: &str, fg: Rgb) {
-        for (i, ch) in text.chars().enumerate() {
-            let (c, r) = (col + i as i32, row);
-            if !(0..i32::from(area.width)).contains(&c) || !(0..i32::from(area.height)).contains(&r) {
-                continue;
-            }
-            let under = self.get(c, r * 2).unwrap_or([0; 3]);
-            let cell = &mut buf[(area.x + c as u16, area.y + r as u16)];
-            cell.set_char(ch).set_fg(color(fg)).set_bg(color(under));
         }
     }
 }

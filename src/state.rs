@@ -24,7 +24,7 @@ const ALARM_AFTER: u8 = 3;
 
 pub enum Lock {
     Idle,
-    Scan(Instant, Receiver<Result<(), String>>),
+    Scan(Receiver<Result<(), String>>),
     Done(Instant),
     Open,
 }
@@ -184,7 +184,7 @@ impl App {
 
 impl App {
     pub fn tick(&mut self) {
-        if let Lock::Scan(_, rx) = &self.lock {
+        if let Lock::Scan(rx) = &self.lock {
             match rx.try_recv() {
                 Ok(Ok(())) => {
                     self.lock = Lock::Done(Instant::now());
@@ -355,7 +355,7 @@ impl App {
         }
         if !matches!(self.lock, Lock::Open) {
             match key.code {
-                KeyCode::Enter | KeyCode::Char(' ') if matches!(self.lock, Lock::Idle) => self.lock = Lock::Scan(now, auth::unlock()),
+                KeyCode::Enter | KeyCode::Char(' ') if matches!(self.lock, Lock::Idle) => self.lock = Lock::Scan(auth::unlock()),
                 KeyCode::Esc | KeyCode::Char('q') => self.quit = true,
                 _ => {}
             }
