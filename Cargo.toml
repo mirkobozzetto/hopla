@@ -2,12 +2,23 @@
 name = "hopla"
 version = "0.1.0"
 edition = "2024"
-description = "Terminal vault for hop secrets: Touch ID, reveal, copy"
+description = "A palette for your GitHub accounts and secrets, with a bunny in a top hat"
+repository = "https://github.com/mirkobozzetto/hopla"
+readme = "README.md"
+keywords = ["tui", "secrets", "git", "github", "keychain"]
+categories = ["command-line-utilities"]
 license = "MIT"
 publish = false
 
 [dependencies]
 arboard = "3"
 ratatui = "0.30"
-robius-authentication = "0.3.1"
 tachyonfx = "0.25"
+
+[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+robius-authentication = "0.3.1"
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1

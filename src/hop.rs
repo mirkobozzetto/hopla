@@ -13,9 +13,12 @@ fn home() -> PathBuf {
     PathBuf::from(env::var_os("HOME").unwrap_or_default())
 }
 
-/// `hop ui` passes its own path and repo; run directly, hop is on the PATH.
-fn bin() -> String {
-    env::var("HOP_BIN").unwrap_or_else(|_| "hop".into())
+/// `hop ui` passes its own path and repo, else install.sh's wrapper. hop is
+/// a bash script, so it runs through bash, Git Bash on Windows.
+fn hop(args: &[&str]) -> Command {
+    let mut cmd = Command::new("bash");
+    cmd.arg(env::var_os("HOP_BIN").map_or_else(|| home().join(".local/bin/hop"), PathBuf::from)).args(args);
+    cmd
 }
 
 fn root() -> PathBuf {
@@ -38,13 +41,13 @@ fn run(cmd: &mut Command) -> Result<String, String> {
 
 /// `hop <account>`: git identity, SSH key and gh. Returns hop's verdict.
 pub fn switch(account: &str) -> Result<String, String> {
-    let out = run(Command::new(bin()).arg(account))?;
+    let out = run(&mut hop(&[account]))?;
     Ok(out.lines().rev().find(|l| l.starts_with("OK") || l.starts_with("WARNING")).unwrap_or("switched").to_owned())
 }
 
 /// `hop s`, line by line.
 pub fn status() -> Result<Vec<String>, String> {
-    Ok(run(Command::new(bin()).arg("s"))?.lines().filter(|l| !l.trim().is_empty()).map(str::to_owned).collect())
+    Ok(run(&mut hop(&["s"]))?.lines().filter(|l| !l.trim().is_empty()).map(str::to_owned).collect())
 }
 
 pub struct NewAccount {
@@ -127,7 +130,17 @@ pub fn create(a: &NewAccount) -> Result<String, String> {
 
 /// Opens GitHub's page for a new SSH key in the default browser.
 pub fn open_keys_page() {
-    let _ = Command::new("open").arg(SSH_KEYS_PAGE).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    #[cfg(target_os = "macos")]
+    let mut open = Command::new("open");
+    #[cfg(windows)]
+    let mut open = {
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", "start", ""]);
+        cmd
+    };
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let mut open = Command::new("xdg-open");
+    let _ = open.arg(SSH_KEYS_PAGE).stdout(Stdio::null()).stderr(Stdio::null()).status();
 }
 
 /// Takes the account out of .env and parks its profile, with the names of

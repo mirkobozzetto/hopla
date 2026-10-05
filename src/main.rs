@@ -1,7 +1,10 @@
-#[cfg(not(target_os = "macos"))]
-compile_error!("hopla is macOS only");
-
 mod auth;
+#[cfg(not(target_os = "macos"))]
+#[path = "files.rs"]
+mod secrets;
+#[cfg(target_os = "macos")]
+#[path = "keychain.rs"]
+mod secrets;
 mod hop;
 mod palette;
 mod pixel;
@@ -29,10 +32,17 @@ fn main() -> std::io::Result<()> {
             {
                 app.key(key);
             }
-            // A command that needs the whole terminal, like gh auth login.
-            if let Some(mut command) = app.suspend.take() {
+            // A command that needs the whole terminal: su, gh auth login.
+            if let Some(mut job) = app.takeover.take() {
                 ratatui::restore();
-                let _ = command.status();
+                let status = job.command.status();
+                if let Some(reply) = job.reply {
+                    let _ = reply.send(match status {
+                        Ok(s) if s.success() => Ok(()),
+                        Ok(_) => Err("wrong password".into()),
+                        Err(e) => Err(e.to_string()),
+                    });
+                }
                 *terminal = ratatui::init();
             }
         }

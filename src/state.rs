@@ -6,7 +6,7 @@ use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use arboard::{Clipboard, SetExtApple};
+use arboard::Clipboard;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tachyonfx::{Effect, Interpolation, fx};
 
@@ -71,6 +71,13 @@ pub enum Mode {
     Status(Vec<String>),
 }
 
+/// A command that needs the whole terminal: `su` to unlock on Linux,
+/// `gh auth login`. `reply` gets its outcome.
+pub struct Takeover {
+    pub command: Command,
+    pub reply: Option<Sender<auth::Outcome>>,
+}
+
 /// A copied value. Dropping it, on time out or on exit, empties the
 /// clipboard only if it still holds that value.
 pub struct Clip {
@@ -117,8 +124,7 @@ pub struct App {
     pub picked: Instant,
     pub typed: Instant,
     pub alarm: Option<Instant>,
-    /// A command that needs the whole terminal, such as `gh auth login`.
-    pub suspend: Option<Command>,
+    pub takeover: Option<Takeover>,
     pub fx: Option<(Effect, Instant)>,
     pub quit: bool,
     pub last_key: Instant,
@@ -145,7 +151,7 @@ impl App {
             picked: now,
             typed: now,
             alarm: None,
-            suspend: None,
+            takeover: None,
             fx: None,
             quit: false,
             last_key: now,
@@ -310,7 +316,7 @@ impl App {
                 self.say(format!("{name} created · public key copied, paste it on GitHub"), Tone::Ok);
                 let mut login = Command::new("gh");
                 login.args(["auth", "login", "--hostname", "github.com", "--git-protocol", "ssh", "--web"]);
-                self.suspend = Some(login);
+                self.takeover = Some(Takeover { command: login, reply: None });
                 self.spawn("reading hop", || Job::Loaded(vault::load()));
             }
             Job::Removed(name, Ok(())) => {
@@ -334,7 +340,7 @@ impl App {
         // Let go of the previous copy first: it would empty the clipboard
         // again if both copies hold the same value.
         self.clip = None;
-        match Clipboard::new().and_then(|mut c| c.set().exclude_from_history().text(value.clone())) {
+        match Clipboard::new().and_then(|mut c| hidden(c.set()).text(value.clone())) {
             Ok(()) => {
                 self.say(format!("copied {name} · gone in 30 s"), Tone::Ok);
                 self.clip = Some(Clip { name, value, at: Instant::now() });
@@ -355,7 +361,7 @@ impl App {
         }
         if !matches!(self.lock, Lock::Open) {
             match key.code {
-                KeyCode::Enter | KeyCode::Char(' ') if matches!(self.lock, Lock::Idle) => self.lock = Lock::Scan(auth::unlock()),
+                KeyCode::Enter | KeyCode::Char(' ') if matches!(self.lock, Lock::Idle) => self.lock = Lock::Scan(self.check()),
                 KeyCode::Esc | KeyCode::Char('q') => self.quit = true,
                 _ => {}
             }
@@ -369,7 +375,8 @@ impl App {
             }
             Mode::Ask(ask) => {
                 if key.code == KeyCode::Enter {
-                    self.mode = Mode::Gate(ask, auth::unlock());
+                    let gate = self.check();
+                    self.mode = Mode::Gate(ask, gate);
                 }
                 return;
             }
@@ -401,6 +408,13 @@ impl App {
             (false, KeyCode::Char(c)) => self.retype(format!("{}{c}", self.query)),
             _ => {}
         }
+    }
+
+    /// Starts an unlock check, handing the terminal over when it needs it.
+    fn check(&mut self) -> Receiver<auth::Outcome> {
+        let (rx, prompt) = auth::unlock();
+        self.takeover = prompt.map(|(command, reply)| Takeover { command, reply: Some(reply) });
+        rx
     }
 
     fn retype(&mut self, query: String) {
@@ -580,4 +594,16 @@ impl App {
             }
         }
     }
+}
+
+/// Keeps a copied value out of clipboard history apps and, on Windows, out
+/// of the cloud clipboard.
+fn hidden(set: arboard::Set<'_>) -> arboard::Set<'_> {
+    #[cfg(target_os = "macos")]
+    let set = arboard::SetExtApple::exclude_from_history(set);
+    #[cfg(windows)]
+    let set = arboard::SetExtWindows::exclude_from_cloud(arboard::SetExtWindows::exclude_from_history(set));
+    #[cfg(target_os = "linux")]
+    let set = arboard::SetExtLinux::exclude_from_history(set);
+    set
 }

@@ -8,6 +8,7 @@ use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
+use crate::auth;
 use crate::palette::Item;
 use crate::pixel::{Canvas, Rgb, color, hex, mix};
 use crate::sprites::{self, Eyes, LOGO, MINI_H, MINI_W};
@@ -106,7 +107,7 @@ fn lock(f: &mut Frame, app: &App, area: Rect, t: f32) {
     let refused = app.note.as_ref().is_some_and(|n| n.1 == Tone::Crit);
     let (line, tint) = match &app.lock {
         _ if alarm => ("ALARM !  ALARM !".fg(if flash { RED } else { WHITE }).bold(), Some(if flash { hex(0xff2020) } else { hex(0x881400) })),
-        Lock::Scan(..) => (format!("waiting for Touch ID {}", spin(t)).fg(CREAM), None),
+        Lock::Scan(..) => (format!("waiting for {} {}", auth::NAME, spin(t)).fg(CREAM), None),
         Lock::Done(_) => ("✓ unlocked".fg(GREEN).bold(), Some(hex(0x58d854))),
         _ if refused => ("still locked".fg(RED).bold(), None),
         _ => (Span::default(), None),
@@ -115,7 +116,7 @@ fn lock(f: &mut Frame, app: &App, area: Rect, t: f32) {
     if let Some((text, tone, _)) = &app.note {
         lines.push(Line::from(text.clone().fg(tone_color(*tone))));
     }
-    lines.push(Line::from(vec!["↵".fg(GOLD), " unlock with Touch ID   ".fg(DIM), "esc".fg(GOLD), " quit".fg(DIM)]));
+    lines.push(Line::from(vec!["↵".fg(GOLD), format!(" unlock with {}   ", auth::NAME).fg(DIM), "esc".fg(GOLD), " quit".fg(DIM)]));
     let [pic, _, text] = Layout::vertical([Length(5), Length(1), Length(lines.len() as u16)]).flex(Flex::Center).areas(area);
     // A refused Touch ID shakes the logo.
     let shake = if refused && (t * 20.0) as i32 % 2 == 0 { 1 } else { 0 };
@@ -298,9 +299,9 @@ fn footer(f: &mut Frame, app: &App, selected: Option<&Item>, note: Rect, keys: R
                 Ask::Secret(account, name) => format!("delete {name} from {account} ?"),
                 Ask::Account(account) => format!("remove account {account} ? its secrets stay in the Keychain"),
             };
-            Line::from(vec![what.fg(RED).bold(), "  ↵ yes, with Touch ID · any key no".fg(DIM)])
+            Line::from(vec![what.fg(RED).bold(), format!("  ↵ yes, with {} · any key no", auth::NAME).fg(DIM)])
         }
-        Mode::Gate(..) => Line::from(format!("waiting for Touch ID {}", spin(t)).fg(CREAM)),
+        Mode::Gate(..) => Line::from(format!("waiting for {} {}", auth::NAME, spin(t)).fg(CREAM)),
         _ => app.note.as_ref().map(|(text, tone, _)| Line::from(text.clone().fg(tone_color(*tone)))).unwrap_or_default(),
     };
     f.render_widget(Paragraph::new(line), note);
