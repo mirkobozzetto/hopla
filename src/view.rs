@@ -10,7 +10,7 @@ use ratatui::widgets::{Block, Paragraph};
 
 use crate::palette::Item;
 use crate::pixel::{Canvas, Rgb, color, hex, mix};
-use crate::sprites::{self, Eyes, LAPLA_H, LAPLA_W, MINI_H, MINI_W};
+use crate::sprites::{self, Eyes, LOGO, MINI_H, MINI_W};
 use crate::state::{App, Ask, Form, FormKind, Lock, Mode, SHOWN, Tone};
 
 const NIGHT: Rgb = hex(0x0c0c1e);
@@ -28,6 +28,9 @@ const FAINT: Color = Color::Rgb(0x44, 0x44, 0x6c);
 const SPIN: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 /// Lapla's corner, when the terminal is wide enough for it.
 const GUTTER: u16 = 18;
+/// The logo's colours, sliding along the letters.
+const STOPS: [Rgb; 4] = [hex(0xf8b800), hex(0xf472b6), hex(0xa78bfa), hex(0x3cbcfc)];
+const LOGO_COLS: u16 = 29;
 
 fn spin(t: f32) -> char {
     SPIN[(t * 12.0) as usize % SPIN.len()]
@@ -53,6 +56,32 @@ fn tone_color(tone: Tone) -> Color {
     }
 }
 
+fn gradient(p: f32) -> Rgb {
+    let p = p.rem_euclid(1.0) * STOPS.len() as f32;
+    mix(STOPS[p as usize], STOPS[(p as usize + 1) % STOPS.len()], p.fract())
+}
+
+/// The pixel logo, 29 x 4 cells: a gradient slides along it and the
+/// letters hop one after the other. `tint` replaces the gradient.
+fn logo(f: &mut Frame, area: Rect, t: f32, tint: Option<Rgb>) {
+    let mut cv = Canvas::new(LOGO_COLS, 5);
+    for (k, letter) in LOGO.iter().enumerate() {
+        let phase = (t * 1.2 - k as f32 * 0.15).rem_euclid(2.4);
+        let lift = if phase < 0.3 { ((phase / 0.3) * std::f32::consts::PI).sin() * 2.0 } else { 0.0 };
+        for (j, row) in letter.iter().enumerate() {
+            for (i, ch) in row.chars().enumerate() {
+                if ch == '#' {
+                    let x = k as i32 * 6 + i as i32;
+                    let c = tint.unwrap_or_else(|| gradient(x as f32 / 29.0 * 0.8 - t * 0.35));
+                    cv.set(x, 2 + j as i32 - lift.round() as i32, c);
+                }
+            }
+        }
+    }
+    let x = area.x + area.width.saturating_sub(LOGO_COLS) / 2;
+    cv.draw(f.buffer_mut(), Rect { x, width: LOGO_COLS.min(area.width), height: 5.min(area.height), ..area }, NIGHT);
+}
+
 pub fn draw(f: &mut Frame, app: &mut App) {
     let t = age(app.start);
     let area = f.area();
@@ -75,30 +104,22 @@ fn lock(f: &mut Frame, app: &App, area: Rect, t: f32) {
     let alarm = app.alarm.is_some_and(|at| age(at) < 4.0);
     let flash = (t * 4.0) as i32 % 2 == 0;
     let refused = app.note.as_ref().is_some_and(|n| n.1 == Tone::Crit);
-    let (title, eyes) = match &app.lock {
-        _ if alarm => ("ALARM !  ALARM !".fg(if flash { RED } else { WHITE }).bold(), Eyes::Open),
-        Lock::Scan(..) => (format!("waiting for Touch ID {}", spin(t)).fg(CREAM), Eyes::Open),
-        Lock::Done(_) => ("✓ unlocked".fg(GREEN).bold(), Eyes::Happy),
-        _ if refused => ("still locked".fg(RED).bold(), Eyes::Shut),
-        _ => ("hopla is locked".fg(GOLD).bold(), if t % 4.1 < 0.15 { Eyes::Shut } else { Eyes::Open }),
+    let (line, tint) = match &app.lock {
+        _ if alarm => ("ALARM !  ALARM !".fg(if flash { RED } else { WHITE }).bold(), Some(if flash { hex(0xff2020) } else { hex(0x881400) })),
+        Lock::Scan(..) => (format!("waiting for Touch ID {}", spin(t)).fg(CREAM), None),
+        Lock::Done(_) => ("✓ unlocked".fg(GREEN).bold(), Some(hex(0x58d854))),
+        _ if refused => ("still locked".fg(RED).bold(), None),
+        _ => (Span::default(), None),
     };
-    let mut lines = vec![Line::from(title)];
+    let mut lines = vec![Line::from(line)];
     if let Some((text, tone, _)) = &app.note {
         lines.push(Line::from(text.clone().fg(tone_color(*tone))));
     }
     lines.push(Line::from(vec!["↵".fg(GOLD), " unlock with Touch ID   ".fg(DIM), "esc".fg(GOLD), " quit".fg(DIM)]));
-    let big = area.height >= (LAPLA_H / 2) as u16 + 8;
-    let (w, h) = if big { (LAPLA_W, LAPLA_H) } else { (MINI_W, MINI_H) };
-    let rows = (h / 2) as u16;
-    let [pic, _, text] = Layout::vertical([Length(rows), Length(1), Length(lines.len() as u16)]).flex(Flex::Center).areas(area);
-    let mut cv = Canvas::new(w as u16, rows);
-    let sprite = if big { sprites::lapla(eyes) } else { sprites::mini(eyes) };
-    // Hides when the alarm rings: only his ears and hat peek out.
-    let sink = if alarm { h / 2 } else { 0 };
-    let shake = i32::from(refused) * ((t * 20.0) as i32 % 2);
-    cv.sprite(shake, sink, &sprite, false, 0);
-    let x = pic.x + pic.width.saturating_sub(w as u16) / 2;
-    cv.draw(f.buffer_mut(), Rect { x, width: w as u16, ..pic }, NIGHT);
+    let [pic, _, text] = Layout::vertical([Length(5), Length(1), Length(lines.len() as u16)]).flex(Flex::Center).areas(area);
+    // A refused Touch ID shakes the logo.
+    let shake = if refused && (t * 20.0) as i32 % 2 == 0 { 1 } else { 0 };
+    logo(f, Rect { x: pic.x + shake, ..pic }, t, tint);
     f.render_widget(Paragraph::new(lines).centered(), text);
 }
 
@@ -125,7 +146,11 @@ fn palette(f: &mut Frame, app: &App, area: Rect, t: f32) {
 }
 
 fn header(f: &mut Frame, app: &App, area: Rect, t: f32) {
-    let mut left = vec![" hopla ".fg(Color::Black).bg(GOLD).bold(), "  ".into()];
+    let mut left: Vec<Span> = "hopla".chars().enumerate().map(|(i, c)| {
+        let [r, g, b] = gradient(i as f32 / 6.0 - t * 0.35);
+        c.to_string().fg(Color::Rgb(r, g, b)).bold()
+    }).collect();
+    left.push("   ".into());
     if let Some(active) = &app.active {
         left.extend(["● ".fg(GREEN), active.clone().fg(WHITE).bold(), " active".fg(DIM)]);
     }
