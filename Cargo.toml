@@ -8,7 +8,7 @@ readme = "README.md"
 keywords = ["tui", "secrets", "git", "github", "keychain"]
 categories = ["command-line-utilities"]
 license = "MIT"
-publish = false
+exclude = ["assets/", ".github/", "install.sh", "install.ps1"]
 
 [dependencies]
 arboard = "3"
