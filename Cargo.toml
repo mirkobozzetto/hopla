@@ -1,0 +1,13 @@
+[package]
+name = "hopla"
+version = "0.1.0"
+edition = "2024"
+description = "Terminal vault for hop secrets: Touch ID, reveal, copy"
+license = "MIT"
+publish = false
+
+[dependencies]
+arboard = "3"
+ratatui = "0.30"
+robius-authentication = "0.3.1"
+tachyonfx = "0.25"
