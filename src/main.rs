@@ -5,6 +5,7 @@ mod app;
 mod auth;
 mod lapla;
 mod pixel;
+mod scene;
 mod sprites;
 mod surprise;
 mod ui;
