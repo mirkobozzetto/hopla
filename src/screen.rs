@@ -169,7 +169,7 @@ fn room(f: &mut Frame, app: &App, area: Rect, t: f32) {
     for l in &labels {
         let hidden = slot.is_some() && machine.intersects(Rect::new(pic.x + l.col.max(0) as u16, pic.y + l.row.max(0) as u16, l.text.len() as u16, 1));
         if !hidden {
-            cv.text(buf, pic, l.col, l.row, &l.text, l.fg, NIGHT);
+            cv.text(buf, pic, l.col, l.row, &l.text, l.fg);
         }
     }
     let ground = cv.h - FLOOR;
@@ -177,20 +177,133 @@ fn room(f: &mut Frame, app: &App, area: Rect, t: f32) {
     match (&pose, slot) {
         (_, Some(age)) => {
             let (word, fg) = if age > scene::JACKPOT_AT { ("JACKPOT !", if (t * 6.0) as i32 % 2 == 0 { GOLD_PX } else { WHITE_PX }) } else { ("· hopla ·", CREAM_PX) };
-            cv.text(buf, pic, lx + (i32::from(scene::SLOT_COLS) - 7 - word.chars().count() as i32) / 2, ly + 1, word, fg, NIGHT);
+            cv.text(buf, pic, lx + (i32::from(scene::SLOT_COLS) - 7 - word.chars().count() as i32) / 2, ly + 1, word, fg);
         }
         (Pose::Sleep, _) => {
             for k in 0..3 {
                 let rise = (t * 0.6 + k as f32 / 3.0) % 1.0;
                 let z = if k % 2 == 0 { "z" } else { "Z" };
-                cv.text(buf, pic, 3 + LAPLA_W - 3 + (rise * 6.0) as i32, (ground - 38) / 2 - (rise * 5.0) as i32, z, SKY_PX, NIGHT);
+                cv.text(buf, pic, 3 + LAPLA_W - 3 + (rise * 6.0) as i32, (ground - 38) / 2 - (rise * 5.0) as i32, z, SKY_PX);
             }
         }
-        (Pose::Startle(_), _) => cv.text(buf, pic, 3 + LAPLA_W / 2, (ground - 46) / 2, "!", GOLD_PX, NIGHT),
-        (Pose::Flip(_), _) => cv.text(buf, pic, 3, 1, "HOPLA !", GOLD_PX, NIGHT),
+        (Pose::Startle(_), _) => cv.text(buf, pic, 3 + LAPLA_W / 2, (ground - 46) / 2, "!", GOLD_PX),
+        (Pose::Flip(_), _) => cv.text(buf, pic, 3, 1, "HOPLA !", GOLD_PX),
         _ => {}
     }
     details(f, app, info, t);
     keys(f, app, foot);
     dialog(f, app, pic);
+}
+
+fn header(f: &mut Frame, app: &App, area: Rect, t: f32) {
+    let logo: Vec<Line> = LOGO
+        .iter()
+        .enumerate()
+        .map(|(r, text)| {
+            let wave = |i: usize| ((t * 3.0 - i as f32 * 0.4 + r as f32).sin() + 1.0) / 2.0;
+            text.chars().map(|ch| ch.to_string()).enumerate().map(|(i, ch)| ch.fg(if wave(i) > 0.5 { GOLD } else { RED })).collect()
+        })
+        .collect();
+    f.render_widget(Paragraph::new(logo), area);
+    let mut rooms = vec!["◀ ".fg(DIM)];
+    for (i, a) in app.accounts.iter().enumerate() {
+        rooms.push(if i == app.account { format!(" ◆ {} ◆ ", a.name.to_uppercase()).fg(GOLD).bold() } else { format!("  {}  ", a.name).fg(DIM) });
+    }
+    rooms.push(" ▶".fg(DIM));
+    let mut chips: Vec<Span> = Vec::new();
+    if let Some(clip) = &app.clip {
+        let left = SHOWN.saturating_sub(clip.at.elapsed()).as_secs() + 1;
+        chips.push(format!("⎘ {} · {left} s   ", clip.name).fg(SKY));
+    }
+    if matches!(app.mode, Mode::Filter) || !app.filter.is_empty() {
+        let caret = if matches!(app.mode, Mode::Filter) && (t * 4.0) as i32 % 2 == 0 { "▌" } else { " " };
+        chips.extend(["/ ".fg(GOLD), app.filter.clone().fg(WHITE), caret.fg(GOLD), format!("  {} found   ", app.rows().len()).fg(DIM)]);
+    }
+    chips.push("unlocked".fg(GREEN));
+    f.render_widget(Paragraph::new(vec![Line::from(rooms).right_aligned(), Line::from(chips).right_aligned()]), area);
+    // A gold light running along the rule under the header.
+    let rule = Rect { y: area.y + 2, height: 1, ..area };
+    let pos = (t * 30.0) as u16 % rule.width.max(1);
+    let line: Line = (0..rule.width).map(|x| "▀".fg(if x.abs_diff(pos) < 4 { GOLD } else { FAINT })).collect();
+    f.render_widget(Paragraph::new(line), rule);
+}
+
+fn details(f: &mut Frame, app: &App, area: Rect, t: f32) {
+    let room = app.account().map_or("", |a| a.name.as_str());
+    let lines = match app.selected() {
+        _ if app.loading => vec![Line::from(format!("reading the Keychain {}", spin(t)).fg(DIM))],
+        _ if app.asleep() => vec![Line::from("Lapla is asleep on the cash · any key wakes him".fg(DIM))],
+        None if !app.filter.is_empty() => vec![Line::from("nothing matches · Esc clears the search".fg(DIM))],
+        None => vec![Line::from(format!("no box in room {room} · n adds one").fg(DIM))],
+        Some(s) => {
+            let (mark, state) = if s.set { ("▣ ".fg(GOLD), "  in the vault · y copies it, never shows it") } else { ("✕ ".fg(RED), "  empty box · Enter puts a value in it") };
+            vec![
+                Line::from(vec![mark, s.name.clone().fg(WHITE).bold(), state.fg(DIM)]),
+                Line::from(format!("room {room} · {}", crate::vault::service(room, &s.name)).fg(FAINT)),
+            ]
+        }
+    };
+    f.render_widget(Paragraph::new(lines), area);
+}
+
+fn keys(f: &mut Frame, app: &App, area: Rect) {
+    let keys = [("← →", "room"), ("↑ ↓", "box"), ("y", "copy"), ("⏎", "deposit"), ("n", "new"), ("d", "empty"), ("/", "find"), ("L", "lock"), ("q", "quit")];
+    let hints: Line = keys.iter().flat_map(|(k, what)| [k.fg(GOLD), format!(" {what}   ").fg(DIM)]).collect();
+    f.render_widget(Paragraph::new(hints), area);
+    let total: usize = app.accounts.iter().map(|a| a.secrets.len()).sum();
+    let count = format!("{total} boxes · {} rooms", app.accounts.len());
+    f.render_widget(Paragraph::new(count.fg(FAINT)).right_aligned(), area);
+}
+
+/// The deposit and empty dialogs, an 8-bit text box over the room.
+fn dialog(f: &mut Frame, app: &App, area: Rect) {
+    let room = app.account().map_or("", |a| a.name.as_str());
+    let caret = "▌".fg(GOLD);
+    let (title, lines, hint) = match &app.mode {
+        Mode::Deposit { name, naming: true, .. } => (
+            format!(" NEW BOX · room {room} "),
+            vec![Line::from(vec!["name   ".fg(DIM), name.clone().fg(WHITE).bold(), caret])],
+            "Enter next · Esc cancels",
+        ),
+        Mode::Deposit { name, value, .. } => (
+            format!(" DEPOSIT · {name} "),
+            vec![
+                Line::from(vec!["value  ".fg(DIM), "*".repeat(value.chars().count()).fg(GOLD), caret]),
+                Line::from("typed blind, never shown".fg(FAINT)),
+            ],
+            "Enter stores · Esc cancels",
+        ),
+        Mode::Confirm => (
+            format!(" EMPTY {} ? ", app.selected().map_or("", |s| s.name.as_str())),
+            vec![Line::from(format!("its value leaves the Keychain of room {room}").fg(DIM))],
+            "y empties · any other key keeps it",
+        ),
+        _ => return,
+    };
+    let mut body = vec![Line::default()];
+    body.extend(lines);
+    body.extend([Line::default(), Line::from(hint.fg(DIM))]);
+    let (w, h) = (52.min(area.width), (body.len() as u16 + 2).min(area.height));
+    let r = Rect::new(area.x + (area.width - w) / 2, area.y + (area.height - h) / 2, w, h);
+    let frame = Block::bordered().border_type(BorderType::Double).border_style(WHITE).title(title.fg(GOLD).bold()).style(Style::new().bg(Color::Black));
+    f.render_widget(Clear, r);
+    f.render_widget(Paragraph::new(body).block(frame.padding(ratatui::widgets::Padding::horizontal(2))), r);
+}
+
+fn note(f: &mut Frame, app: &App, area: Rect) {
+    let Some((text, tone, born)) = &app.note else { return };
+    let (mark, tint) = match tone {
+        Tone::Ok => ("✓", GREEN),
+        Tone::Info => ("i", SKY),
+        Tone::Warn => ("!", GOLD),
+        Tone::Crit => ("✗", RED),
+    };
+    let width = (text.chars().count() as u16 + 6).min(area.width.saturating_sub(4));
+    // Slides in from the right edge for 0.3 s.
+    let slide = ((1.0 - born.elapsed().as_secs_f32() / 0.3).max(0.0) * f32::from(width)) as u16;
+    let x = area.right().saturating_sub(width + 2) + slide;
+    let r = Rect::new(x, area.bottom().saturating_sub(6), width - slide, 3).intersection(area);
+    let frame = Block::bordered().border_type(BorderType::Double).border_style(tint).style(Style::new().bg(Color::Black));
+    f.render_widget(Clear, r);
+    f.render_widget(Paragraph::new(Line::from(vec![format!(" {mark} ").fg(tint), text.clone().fg(WHITE)])).block(frame), r);
 }

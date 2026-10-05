@@ -18,12 +18,6 @@ const IDLE: Duration = Duration::from_secs(5 * 60);
 // Time the lock screen shows its check mark, and Lapla flips, before the vault.
 const PASSED: Duration = Duration::from_millis(900);
 
-#[derive(PartialEq)]
-pub enum Focus {
-    Accounts,
-    Secrets,
-}
-
 pub enum Lock {
     Idle,
     Scan(Instant, Receiver<Result<(), String>>),
@@ -89,7 +83,6 @@ pub struct App {
     pub loading: bool,
     pub account: usize,
     pub sel: usize,
-    pub focus: Focus,
     pub filter: String,
     pub note: Option<(String, Tone, Instant)>,
     pub clip: Option<Clip>,
@@ -118,7 +111,6 @@ impl App {
             loading: false,
             account: 0,
             sel: 0,
-            focus: Focus::Secrets,
             filter: String::new(),
             note: None,
             clip: None,

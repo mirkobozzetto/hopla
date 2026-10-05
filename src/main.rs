@@ -3,12 +3,11 @@ compile_error!("hopla is macOS only");
 
 mod app;
 mod auth;
-mod lapla;
 mod pixel;
 mod scene;
+mod screen;
 mod sprites;
 mod surprise;
-mod ui;
 mod vault;
 
 use std::time::Duration;
@@ -23,7 +22,7 @@ fn main() -> std::io::Result<()> {
     ratatui::run(|terminal| {
         while !app.quit {
             app.tick();
-            terminal.draw(|f| ui::draw(f, &mut app))?;
+            terminal.draw(|f| screen::draw(f, &mut app))?;
             if event::poll(FRAME)?
                 && let Event::Key(key) = event::read()?
                 && key.kind == KeyEventKind::Press

@@ -141,13 +141,13 @@ impl Canvas {
 
     /// Writes text over the drawn canvas, on the colour of the cells it
     /// covers. `col` and `row` count cells from the top left of `area`.
-    pub fn text(&self, buf: &mut Buffer, area: Rect, col: i32, row: i32, text: &str, fg: Rgb, bg: Rgb) {
+    pub fn text(&self, buf: &mut Buffer, area: Rect, col: i32, row: i32, text: &str, fg: Rgb) {
         for (i, ch) in text.chars().enumerate() {
             let (c, r) = (col + i as i32, row);
             if !(0..i32::from(area.width)).contains(&c) || !(0..i32::from(area.height)).contains(&r) {
                 continue;
             }
-            let under = self.get(c, r * 2).unwrap_or(bg);
+            let under = self.get(c, r * 2).unwrap_or([0; 3]);
             let cell = &mut buf[(area.x + c as u16, area.y + r as u16)];
             cell.set_char(ch).set_fg(color(fg)).set_bg(color(under));
         }

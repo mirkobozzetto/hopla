@@ -249,7 +249,7 @@ pub fn host(cv: &mut Canvas, pose: &Pose) {
             let lift = (16.0 * (q * TAU / 2.0).sin()) as i32;
             let turn = (q * 4.0) as u8 % 4;
             // A quarter turn lays him on his side: centre the turned sprite.
-            let (w, h) = if turn % 2 == 0 { (LAPLA_W, LAPLA_H) } else { (LAPLA_H, LAPLA_W) };
+            let (w, h) = if turn.is_multiple_of(2) { (LAPLA_W, LAPLA_H) } else { (LAPLA_H, LAPLA_W) };
             cv.sprite(x + (LAPLA_W - w) / 2, ground - h - lift, &rows, false, turn);
         }
     }
