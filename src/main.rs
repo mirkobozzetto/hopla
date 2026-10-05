@@ -4,6 +4,7 @@ compile_error!("hopla is macOS only");
 mod app;
 mod auth;
 mod lapla;
+mod pixel;
 mod ui;
 mod vault;
 
