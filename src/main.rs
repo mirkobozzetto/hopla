@@ -1,6 +1,7 @@
 #[cfg(not(target_os = "macos"))]
 compile_error!("hopla is macOS only");
 
+mod app;
 mod auth;
 mod vault;
 
