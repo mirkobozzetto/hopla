@@ -10,6 +10,7 @@ mod scene;
 mod screen;
 mod sprites;
 mod state;
+mod view;
 mod surprise;
 mod vault;
 
