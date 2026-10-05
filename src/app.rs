@@ -91,7 +91,6 @@ pub struct App {
     pub sel: usize,
     pub focus: Focus,
     pub filter: String,
-    pub filtering: bool,
     pub note: Option<(String, Tone, Instant)>,
     pub clip: Option<Clip>,
     pub reading: Option<(String, String)>,
@@ -121,7 +120,6 @@ impl App {
             sel: 0,
             focus: Focus::Secrets,
             filter: String::new(),
-            filtering: false,
             note: None,
             clip: None,
             reading: None,
@@ -242,6 +240,8 @@ impl App {
 
     fn lock(&mut self) {
         self.lock = Lock::Idle;
+        // Drops a value being typed: it never outlives the unlocked screen.
+        self.mode = Mode::Browse;
         self.fx = None;
     }
 
@@ -258,6 +258,7 @@ impl App {
     }
 
     pub fn key(&mut self, key: KeyEvent) {
+        let asleep = self.asleep();
         self.last_key = Instant::now();
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.quit = true;
@@ -273,53 +274,74 @@ impl App {
             }
             return;
         }
-        if self.filtering {
-            match key.code {
-                KeyCode::Esc => {
-                    self.filter.clear();
-                    self.filtering = false;
-                }
-                KeyCode::Enter => self.filtering = false,
-                KeyCode::Backspace => _ = self.filter.pop(),
-                KeyCode::Down => self.step(1),
-                KeyCode::Up => self.step(-1),
-                KeyCode::Char(c) => {
-                    self.filter.push(c);
-                    self.sel = 0;
-                }
-                _ => {}
-            }
+        match self.mode {
+            Mode::Browse => {}
+            Mode::Filter => return self.filter_key(key.code),
+            Mode::Deposit { .. } | Mode::Confirm => return self.dialog(key.code),
+        }
+        self.fun.key(key.code, asleep);
+        // A key on a sleeping Lapla only wakes him up, but q still quits.
+        if asleep && key.code != KeyCode::Char('q') {
             return;
         }
+        let blank = || String::new();
         match key.code {
             KeyCode::Char('q') => self.quit = true,
-            KeyCode::Tab | KeyCode::BackTab => {
-                self.focus = if self.focus == Focus::Accounts { Focus::Secrets } else { Focus::Accounts };
-            }
+            KeyCode::Left => self.go(-1),
+            KeyCode::Right => self.go(1),
             KeyCode::Char('j') | KeyCode::Down => self.step(1),
             KeyCode::Char('k') | KeyCode::Up => self.step(-1),
             KeyCode::Char('/') => {
-                self.filtering = true;
+                self.mode = Mode::Filter;
                 self.filter.clear();
-                self.focus = Focus::Secrets;
                 self.sel = 0;
             }
             KeyCode::Esc => self.filter.clear(),
-            KeyCode::Enter if self.focus == Focus::Accounts => self.focus = Focus::Secrets,
             KeyCode::Char('y') => self.copy_selected(),
+            KeyCode::Enter => {
+                if let Some(s) = self.selected() {
+                    self.mode = Mode::Deposit { name: s.name.clone(), value: blank(), naming: false };
+                }
+            }
+            KeyCode::Char('n') => self.mode = Mode::Deposit { name: blank(), value: blank(), naming: true },
+            KeyCode::Char('d') if self.selected().is_some() => self.mode = Mode::Confirm,
             KeyCode::Char('L') => self.lock(),
             _ => {}
         }
     }
 
-    fn step(&mut self, d: isize) {
-        let move_by = |i: usize, len: usize| i.saturating_add_signed(d).min(len.saturating_sub(1));
-        if self.focus == Focus::Accounts {
-            self.account = move_by(self.account, self.accounts.len());
-            self.sel = 0;
-        } else {
-            self.sel = move_by(self.sel, self.rows().len());
+    fn filter_key(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Esc => {
+                self.filter.clear();
+                self.mode = Mode::Browse;
+            }
+            KeyCode::Enter => self.mode = Mode::Browse,
+            KeyCode::Backspace => _ = self.filter.pop(),
+            KeyCode::Down => self.step(1),
+            KeyCode::Up => self.step(-1),
+            KeyCode::Char(c) => {
+                self.filter.push(c);
+                self.sel = 0;
+            }
+            _ => {}
         }
+    }
+
+    /// ← →: Lapla walks to the next room, wrapping around.
+    fn go(&mut self, dir: i32) {
+        let rooms = self.accounts.len() as i32;
+        if rooms < 2 {
+            return;
+        }
+        let from = self.account;
+        self.account = (from as i32 + dir).rem_euclid(rooms) as usize;
+        self.sel = 0;
+        self.travel = Some(Travel { from, dir, at: Instant::now() });
+    }
+
+    fn step(&mut self, d: isize) {
+        self.sel = self.sel.saturating_add_signed(d).min(self.rows().len().saturating_sub(1));
     }
 
     /// `y`: reads the selected secret off screen and copies it. A value is

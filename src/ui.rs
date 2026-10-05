@@ -8,7 +8,7 @@ use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph};
 
-use crate::app::{App, Focus, Lock, SHOWN, Tone};
+use crate::app::{App, Focus, Lock, Mode, SHOWN, Tone};
 use crate::lapla::{self, Mood};
 use crate::vault::{self, Secret};
 
@@ -238,8 +238,9 @@ fn secrets(f: &mut Frame, app: &App, area: Rect, t: f32) {
     f.render_widget(block, area);
     let rows = app.rows();
     let mut lines = Vec::new();
-    if app.filtering || !app.filter.is_empty() {
-        let caret = if app.filtering && pulse(t, 8.0) > 0.5 { "▌" } else { " " };
+    let filtering = matches!(app.mode, Mode::Filter);
+    if filtering || !app.filter.is_empty() {
+        let caret = if filtering && pulse(t, 8.0) > 0.5 { "▌" } else { " " };
         let found = format!("  {} match", rows.len());
         lines.push(Line::from(vec!["/ ".fg(ACCENT), app.filter.clone().into(), caret.fg(ACCENT), found.fg(DIM)]));
     }
