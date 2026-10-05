@@ -3,6 +3,7 @@ compile_error!("hopla is macOS only");
 
 mod app;
 mod auth;
+mod hop;
 mod pixel;
 mod scene;
 mod screen;
