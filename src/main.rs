@@ -9,6 +9,7 @@ mod pixel;
 mod scene;
 mod screen;
 mod sprites;
+mod state;
 mod surprise;
 mod vault;
 
