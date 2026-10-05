@@ -6,8 +6,8 @@ use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph};
 
-use crate::app::{App, Focus, Lock, Tone};
-use crate::vault;
+use crate::app::{App, Focus, Lock, SHOWN, Tone};
+use crate::vault::{self, Secret};
 
 const BG: Color = Color::Rgb(0x0b, 0x0f, 0x0d);
 const PANEL: Color = Color::Rgb(0x0f, 0x15, 0x12);
@@ -24,6 +24,7 @@ const SEL: Color = Color::Rgb(0x15, 0x22, 0x1c);
 const SPIN: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const LOGO: [&str; 2] = ["█▄▄ ▄▀▄ █▀▄ █   ▄▀▄", "█ █ ▀▄▀ █▀  █▄▄ █▀█"];
 const MASK: &str = "••••••••••••";
+const GLYPHS: [char; 18] = ['▓', '▒', '░', '#', '%', '&', '@', '$', '*', '+', '=', '<', '>', '?', '/', '|', '§', '¤'];
 
 fn pulse(t: f32, speed: f32) -> f32 {
     ((t * speed).sin() + 1.0) / 2.0
@@ -37,6 +38,38 @@ fn mix(a: Color, b: Color, p: f32) -> Color {
 
 fn spin(t: f32) -> char {
     SPIN[(t * 12.0) as usize % SPIN.len()]
+}
+
+fn scramble(i: usize, frame: usize) -> char {
+    let h = (i as u32).wrapping_mul(0x9e37_79b9) ^ (frame as u32).wrapping_mul(0x85eb_ca6b);
+    GLYPHS[((h ^ (h >> 13)).wrapping_mul(0x27d4_eb2f) >> 16) as usize % GLYPHS.len()]
+}
+
+/// The value cell: masked, being read, or decoding glyph by glyph.
+fn value(app: &App, account: &str, s: &Secret, t: f32) -> Vec<Span<'static>> {
+    let this = |a: &str, n: &str| a == account && n == s.name;
+    if let Some(r) = app.reveal.as_ref().filter(|r| this(&r.account, &r.name)) {
+        let age = r.at.elapsed().as_secs_f32();
+        return r
+            .value
+            .chars()
+            .enumerate()
+            .map(|(i, c)| {
+                let at = 0.25 + i as f32 * 0.02;
+                if age < at {
+                    Span::from(scramble(i, (t * 26.0) as usize).to_string()).fg(ACCENT2)
+                } else if age < at + 0.15 {
+                    Span::from(c.to_string()).fg(ACCENT).bold()
+                } else {
+                    Span::from(c.to_string()).fg(TEXT)
+                }
+            })
+            .collect();
+    }
+    if app.reading.as_ref().is_some_and(|(a, n)| this(a, n)) {
+        return vec![format!("reading the Keychain {}", spin(t)).fg(DIM)];
+    }
+    vec![if s.set { MASK.fg(DIM) } else { "-".fg(FAINT) }]
 }
 
 fn panel<'a>(title: Span<'a>, border: Color) -> Block<'a> {
@@ -93,7 +126,12 @@ fn vault(f: &mut Frame, app: &App, area: Rect, t: f32) {
         })
         .collect();
     f.render_widget(Paragraph::new(logo), head);
+    let clip = app.clip.as_ref().map(|c| {
+        let left = SHOWN.saturating_sub(c.at.elapsed()).as_secs() + 1;
+        format!("⎘ {} · {left} s   ", c.name).fg(INFO)
+    });
     let chips = Line::from(vec![
+        clip.unwrap_or_default(),
         "● ".fg(ACCENT),
         app.account().map_or("", |a| a.name.as_str()).into(),
         "  unlocked".fg(DIM),
@@ -109,7 +147,7 @@ fn vault(f: &mut Frame, app: &App, area: Rect, t: f32) {
     let [left, mid, right] = Layout::horizontal([Length(26), Fill(3), Fill(2)]).spacing(2).areas(main);
     accounts(f, app, left);
     secrets(f, app, mid, t);
-    detail(f, app, right);
+    detail(f, app, right, t);
 
     let keys = [("j/k", "move"), ("Tab", "panel"), ("/", "filter"), ("r", "reveal"), ("y", "copy"), ("q", "quit")];
     let hints: Line = keys.iter().flat_map(|(k, what)| [k.fg(ACCENT), format!(" {what}   ").fg(DIM)]).collect();
@@ -177,7 +215,7 @@ fn secrets(f: &mut Frame, app: &App, area: Rect, t: f32) {
         let mut spans = vec![(if selected { "▌ " } else { "  " }).fg(ACCENT), "● ".fg(if s.set { ACCENT } else { WARN })];
         spans.extend(lit(&s.name, &app.filter, width));
         spans.push(format!("{:<9}", if s.set { "set" } else { "missing" }).fg(if s.set { DIM } else { WARN }));
-        spans.push(if s.set { MASK.fg(DIM) } else { "-".fg(FAINT) });
+        spans.extend(value(app, name, s, t));
         lines.push(row(spans, selected, inner.width));
     }
     let empty = if app.loading {
@@ -193,7 +231,7 @@ fn secrets(f: &mut Frame, app: &App, area: Rect, t: f32) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
-fn detail(f: &mut Frame, app: &App, area: Rect) {
+fn detail(f: &mut Frame, app: &App, area: Rect, t: f32) {
     let (Some(account), Some(s)) = (app.account(), app.selected()) else {
         return f.render_widget(panel("detail".fg(DIM), BORDER), area);
     };
@@ -211,10 +249,20 @@ fn detail(f: &mut Frame, app: &App, area: Rect) {
         info,
     );
     f.render_widget(Paragraph::new("V A L U E".fg(DIM)), label);
-    let value = if s.set { MASK.fg(DIM) } else { format!("hop secret set {} {}", s.name, account.name).fg(ACCENT) };
+    let shown = if s.set {
+        Line::from(value(app, &account.name, s, t))
+    } else {
+        Line::from(format!("hop secret set {} {}", s.name, account.name).fg(ACCENT))
+    };
     let frame = Block::bordered().border_type(BorderType::Rounded).border_style(BORDER).padding(Padding::horizontal(1));
-    f.render_widget(Paragraph::new(value).block(frame), vbox);
-    let keys: Line = if s.set {
+    f.render_widget(Paragraph::new(shown).block(frame), vbox);
+    let revealed = app.reveal.as_ref().filter(|r| r.account == account.name && r.name == s.name);
+    let keys: Line = if let Some(r) = revealed {
+        let left = SHOWN.saturating_sub(r.at.elapsed());
+        let full = (left.as_secs_f32() / SHOWN.as_secs_f32() * 24.0).round() as usize;
+        let hides = format!("hides in {} s ", left.as_secs() + 1);
+        Line::from(vec![hides.fg(DIM), "█".repeat(full).fg(ACCENT2), "─".repeat(24 - full).fg(FAINT)])
+    } else if s.set {
         Line::from(vec!["r".fg(ACCENT), " reveal   ".fg(DIM), "y".fg(ACCENT), " copy".fg(DIM)])
     } else {
         Line::from("not stored yet: run the command above".fg(DIM))
