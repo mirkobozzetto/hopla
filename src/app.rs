@@ -135,6 +135,59 @@ impl App {
         }
     }
 
+    pub fn key(&mut self, key: KeyEvent) {
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+            self.quit = true;
+            return;
+        }
+        if !matches!(self.lock, Lock::Open) {
+            match key.code {
+                KeyCode::Enter | KeyCode::Char(' ') if matches!(self.lock, Lock::Idle) => {
+                    self.lock = Lock::Scan(Instant::now(), auth::unlock());
+                }
+                KeyCode::Char('q') => self.quit = true,
+                _ => {}
+            }
+            return;
+        }
+        if self.filtering {
+            match key.code {
+                KeyCode::Esc => {
+                    self.filter.clear();
+                    self.filtering = false;
+                }
+                KeyCode::Enter => self.filtering = false,
+                KeyCode::Backspace => _ = self.filter.pop(),
+                KeyCode::Down => self.step(1),
+                KeyCode::Up => self.step(-1),
+                KeyCode::Char(c) => {
+                    self.filter.push(c);
+                    self.sel = 0;
+                }
+                _ => {}
+            }
+            return;
+        }
+        match key.code {
+            KeyCode::Char('q') => self.quit = true,
+            KeyCode::Tab | KeyCode::BackTab => {
+                self.focus = if self.focus == Focus::Accounts { Focus::Secrets } else { Focus::Accounts };
+            }
+            KeyCode::Char('j') | KeyCode::Down => self.step(1),
+            KeyCode::Char('k') | KeyCode::Up => self.step(-1),
+            KeyCode::Char('/') => {
+                self.filtering = true;
+                self.filter.clear();
+                self.focus = Focus::Secrets;
+                self.sel = 0;
+            }
+            KeyCode::Esc => self.filter.clear(),
+            KeyCode::Enter if self.focus == Focus::Accounts => self.focus = Focus::Secrets,
+            KeyCode::Enter | KeyCode::Char('r' | 'y') => self.fetch(),
+            _ => {}
+        }
+    }
+
     fn step(&mut self, d: isize) {
         let move_by = |i: usize, len: usize| i.saturating_add_signed(d).min(len.saturating_sub(1));
         if self.focus == Focus::Accounts {
