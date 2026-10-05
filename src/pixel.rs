@@ -116,6 +116,17 @@ impl Canvas {
         }
     }
 
+    /// Copies the drawn pixels of `other` with its top left at (x, y).
+    pub fn blit(&mut self, other: &Canvas, x: i32, y: i32) {
+        for j in 0..other.h {
+            for i in 0..other.w {
+                if let Some(c) = other.get(i, j) {
+                    self.set(x + i, y + j, c);
+                }
+            }
+        }
+    }
+
     /// Puts the canvas on screen at `area`, `bg` where nothing was drawn.
     pub fn draw(&self, buf: &mut Buffer, area: Rect, bg: Rgb) {
         for row in 0..area.height.min((self.h / 2) as u16) {
