@@ -175,8 +175,15 @@ fn pillar(cv: &mut Canvas, x: i32, top: i32, w: i32) {
 
 /// The wall of boxes of one room, shifted `dx` pixels, `sel` lit in gold.
 /// Returns the names and numbers to write over it.
-pub fn shelf(cv: &mut Canvas, dx: i32, boxes: &[(&str, bool)], sel: Option<usize>, lit_all: bool, t: f32) -> Vec<Label> {
+pub fn shelf(cv: &mut Canvas, dx: i32, title: &str, boxes: &[(&str, bool)], sel: Option<usize>, lit_all: bool, t: f32) -> Vec<Label> {
     pillar(cv, LANE - 6 + dx, 0, 4);
+    // The room's name on a gold-framed plaque at the top of the wall.
+    let sign = title.chars().count() as i32 + 4;
+    let sx = LANE + dx + (cv.w - LANE - sign) / 2;
+    cv.rect(sx, 2, sign, 6, c('y'));
+    cv.rect(sx + 1, 3, sign - 2, 4, c('b'));
+    cv.rect(sx, 7, sign, 1, c('o'));
+    let mut labels = vec![Label { col: sx + 2, row: 2, text: title.into(), fg: c('Y') }];
     let cols = ((cv.w - LANE - 2) / (BOX_W + 2)).max(1);
     let rows = ((cv.h - FLOOR - 4) / (BOX_H + 2)).max(1);
     // Scroll by whole rows to keep the selected box on the wall.
@@ -184,9 +191,8 @@ pub fn shelf(cv: &mut Canvas, dx: i32, boxes: &[(&str, bool)], sel: Option<usize
     let shown = (boxes.len() as i32 - first).clamp(1, cols * rows);
     let used = (shown + cols - 1) / cols * (BOX_H + 2);
     // Centred on the wall, on an even row so names land on cells.
-    let top = ((cv.h - FLOOR - used) / 2).max(2) & !1;
+    let top = ((cv.h - FLOOR - used) / 2).max(10) & !1;
     let blink = (t * 3.0) as i32 % 2 == 0;
-    let mut labels = Vec::new();
     for (i, (name, full)) in boxes.iter().enumerate().skip(first as usize).take(shown as usize) {
         let k = i as i32 - first;
         let (x, y) = (LANE + dx + (k % cols) * (BOX_W + 2), top + (k / cols) * (BOX_H + 2));

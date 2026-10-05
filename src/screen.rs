@@ -125,17 +125,20 @@ fn room(f: &mut Frame, app: &App, area: Rect, t: f32) {
     header(f, app, head, t);
     let mut cv = Canvas::new(pic.width, pic.height);
     scene::wall(&mut cv, false);
+    let room_name = app.account().map_or("", |a| a.name.as_str());
+    let sign = |name: &str| format!("VAULT · {}", name.to_uppercase());
     let shown: Vec<(&str, bool)> = app.rows().iter().map(|s| (s.name.as_str(), s.set)).collect();
     let travel = app.travel.as_ref().map(|tr| (tr, tr.at.elapsed().as_secs_f32() / TRAVEL)).filter(|(_, p)| *p < 1.0);
     let flip = since(app.fun.flip, 1.0);
     let mut labels = Vec::new();
     if let Some((tr, p)) = travel {
-        let old: Vec<(&str, bool)> = app.accounts[tr.from].secrets.iter().map(|s| (s.name.as_str(), s.set)).collect();
+        let from = &app.accounts[tr.from];
+        let old: Vec<(&str, bool)> = from.secrets.iter().map(|s| (s.name.as_str(), s.set)).collect();
         let w = cv.w as f32;
-        labels.extend(scene::shelf(&mut cv, (-tr.dir as f32 * p * w) as i32, &old, None, false, t));
-        labels.extend(scene::shelf(&mut cv, (tr.dir as f32 * (1.0 - p) * w) as i32, &shown, None, false, t));
+        labels.extend(scene::shelf(&mut cv, (-tr.dir as f32 * p * w) as i32, &sign(&from.name), &old, None, false, t));
+        labels.extend(scene::shelf(&mut cv, (tr.dir as f32 * (1.0 - p) * w) as i32, &sign(room_name), &shown, None, false, t));
     } else {
-        labels = scene::shelf(&mut cv, 0, &shown, Some(app.sel), flip.is_some(), t);
+        labels = scene::shelf(&mut cv, 0, &sign(room_name), &shown, Some(app.sel), flip.is_some(), t);
     }
     scene::floor(&mut cv);
     let rain = since(app.fun.rain, 3.2);
