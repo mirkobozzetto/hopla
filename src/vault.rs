@@ -6,7 +6,7 @@
 //! rebuild, because an ad hoc signed binary changes identity each time.
 
 use std::env;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
@@ -58,6 +58,10 @@ pub fn active() -> Option<String> {
     Some(Path::new(&path).file_stem()?.to_string_lossy().into_owned())
 }
 
+fn profile(account: &str) -> PathBuf {
+    profiles_dir().join(format!("{account}.gitconfig"))
+}
+
 /// Every account with its declared secrets, each marked set or missing like
 /// `hop secret list <account>`. Values are not read here.
 pub fn load() -> Result<Vec<Account>, String> {
@@ -74,33 +78,98 @@ pub fn load() -> Result<Vec<Account>, String> {
             let name = file.file_stem().unwrap_or_default().to_string_lossy().into_owned();
             let secrets = git_config(file, &["--get-all", "env.var"])
                 .into_iter()
-                .map(|var| Ok(Secret { set: security(&service(&name, &var), false)?.is_some(), name: var }))
+                .map(|var| Ok(Secret { set: exists(&name, &var)?, name: var }))
                 .collect::<Result<_, String>>()?;
             Ok(Account { name, secrets })
         })
         .collect()
 }
 
-/// The value of one secret, `None` when it is missing.
-pub fn read(account: &str, name: &str) -> Result<Option<String>, String> {
-    security(&service(account, name), true)
+/// The same rules as `hop secret set`.
+pub fn valid_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_uppercase() || c == '_')
+        && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
 }
 
-/// Runs `security find-generic-password` for one item. Without `value` it
-/// only checks the item exists, which never touches the secret data.
-fn security(service: &str, value: bool) -> Result<Option<String>, String> {
-    let user = env::var("USER").unwrap_or_default();
-    let mut cmd = Command::new(SECURITY);
-    cmd.args(["find-generic-password", "-a", &user, "-s", service]);
+/// Non empty, without a quote, backslash or space, like `hop secret set`:
+/// the value travels inside a quoted `security -i` command.
+pub fn valid_value(value: &str) -> bool {
+    !value.is_empty() && !value.chars().any(|c| c == '"' || c == '\\' || c.is_whitespace())
+}
+
+fn find(account: &str, name: &str, value: bool) -> Result<Option<String>, String> {
+    let (user, service) = (user(), service(account, name));
+    let mut args = vec!["find-generic-password", "-a", &user, "-s", &service];
     if value {
-        cmd.arg("-w");
+        args.push("-w");
     }
-    let mut child = cmd
-        .stdin(Stdio::null())
+    match security(&args, None)? {
+        (Some(0), out) => Ok(Some(out.trim_end_matches('\n').to_owned())),
+        (Some(NOT_FOUND), _) => Ok(None),
+        (_, err) => Err(refused(&err)),
+    }
+}
+
+fn exists(account: &str, name: &str) -> Result<bool, String> {
+    find(account, name, false).map(|found| found.is_some())
+}
+
+/// The value of one secret, `None` when it is missing.
+pub fn read(account: &str, name: &str) -> Result<Option<String>, String> {
+    find(account, name, true)
+}
+
+/// Stores a value like `hop secret set NAME account`, and declares the name
+/// in the account's profile when it is new.
+pub fn store(account: &str, name: &str, value: &str) -> Result<(), String> {
+    // Fed through stdin so the value never shows up in the process list.
+    let line = format!("add-generic-password -U -a \"{}\" -s \"{}\" -w \"{value}\"\n", user(), service(account, name));
+    security(&["-i"], Some(&line))?;
+    if !exists(account, name)? {
+        return Err("the Keychain did not keep the value".into());
+    }
+    let file = profile(account);
+    if !git_config(&file, &["--get-all", "env.var"]).iter().any(|n| n == name) {
+        git_config(&file, &["--add", "env.var", name]);
+    }
+    Ok(())
+}
+
+/// Deletes the Keychain item and the name from the account's profile.
+pub fn remove(account: &str, name: &str) -> Result<(), String> {
+    let (user, service) = (user(), service(account, name));
+    match security(&["delete-generic-password", "-a", &user, "-s", &service], None)? {
+        (Some(0 | NOT_FOUND), _) => {}
+        (_, err) => return Err(refused(&err)),
+    }
+    // Names are [A-Z0-9_], so the anchored pattern matches only this one.
+    git_config(&profile(account), &["--unset", "env.var", &format!("^{name}$")]);
+    Ok(())
+}
+
+fn user() -> String {
+    env::var("USER").unwrap_or_default()
+}
+
+fn refused(err: &str) -> String {
+    let reason = err.rsplit(": ").next().unwrap_or("").trim();
+    format!("Keychain: {}", if reason.is_empty() { "access refused" } else { reason })
+}
+
+/// Runs `security` with a 3 s limit and returns its exit code with its
+/// output, stdout on success and stderr otherwise.
+fn security(args: &[&str], input: Option<&str>) -> Result<(Option<i32>, String), String> {
+    let mut child = Command::new(SECURITY)
+        .args(args)
+        .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("{SECURITY}: {e}"))?;
+    if let (Some(text), Some(mut stdin)) = (input, child.stdin.take()) {
+        stdin.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+    }
     let deadline = Instant::now() + TIMEOUT;
     // ponytail: polls every 20 ms, fine for one item at a time.
     let status = loop {
@@ -115,19 +184,10 @@ fn security(service: &str, value: bool) -> Result<Option<String>, String> {
         thread::sleep(Duration::from_millis(20));
     };
     let mut out = String::new();
-    match status.code() {
-        Some(0) => {
-            if value {
-                child.stdout.take().map(|mut s| s.read_to_string(&mut out));
-                out.truncate(out.trim_end_matches('\n').len());
-            }
-            Ok(Some(out))
-        }
-        Some(NOT_FOUND) => Ok(None),
-        _ => {
-            child.stderr.take().map(|mut s| s.read_to_string(&mut out));
-            let reason = out.rsplit(": ").next().unwrap_or("").trim();
-            Err(format!("Keychain: {}", if reason.is_empty() { "access refused" } else { reason }))
-        }
+    if status.success() {
+        child.stdout.take().map(|mut s| s.read_to_string(&mut out));
+    } else {
+        child.stderr.take().map(|mut s| s.read_to_string(&mut out));
     }
+    Ok((status.code(), out))
 }
