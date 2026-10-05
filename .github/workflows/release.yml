@@ -51,6 +51,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: rust-lang/crates-io-auth-action@v1
         id: auth
-      - run: cargo publish --locked
+      - name: Publish, unless this version is already on crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          code=$(curl -s -o /dev/null -w '%{http_code}' -A "hopla-release (github.com/mirkobozzetto/hopla)" \
+            "https://crates.io/api/v1/crates/hopla/$version")
+          if [ "$code" = 200 ]; then echo "hopla $version is already published"; else cargo publish --locked; fi
