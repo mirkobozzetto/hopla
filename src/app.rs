@@ -4,12 +4,14 @@ use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use arboard::{Clipboard, SetExtApple};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::auth;
 use crate::vault::{self, Account, Secret};
 
 const NOTE_TTL: Duration = Duration::from_millis(3500);
+pub const SHOWN: Duration = Duration::from_secs(30);
 
 #[derive(PartialEq)]
 pub enum Focus {
@@ -31,8 +33,40 @@ pub enum Tone {
     Crit,
 }
 
+#[derive(Clone, Copy)]
+enum Use {
+    Reveal,
+    Copy,
+}
+
 enum Job {
     Loaded(Result<Vec<Account>, String>),
+    Value(Use, String, String, Result<Option<String>, String>),
+}
+
+pub struct Reveal {
+    pub account: String,
+    pub name: String,
+    pub value: String,
+    pub at: Instant,
+}
+
+/// A copied value. Dropping it, on time out or on exit, empties the
+/// clipboard only if it still holds that value.
+pub struct Clip {
+    pub name: String,
+    value: String,
+    pub at: Instant,
+}
+
+impl Drop for Clip {
+    fn drop(&mut self) {
+        if let Ok(mut clipboard) = Clipboard::new()
+            && clipboard.get_text().is_ok_and(|text| text == self.value)
+        {
+            let _ = clipboard.clear();
+        }
+    }
 }
 
 pub struct App {
@@ -47,6 +81,9 @@ pub struct App {
     pub filter: String,
     pub filtering: bool,
     pub note: Option<(String, Tone, Instant)>,
+    pub reveal: Option<Reveal>,
+    pub clip: Option<Clip>,
+    pub reading: Option<(String, String)>,
     pub quit: bool,
     tx: Sender<Job>,
     rx: Receiver<Job>,
@@ -67,6 +104,9 @@ impl App {
             filter: String::new(),
             filtering: false,
             note: None,
+            reveal: None,
+            clip: None,
+            reading: None,
             quit: false,
             tx,
             rx,
@@ -113,7 +153,24 @@ impl App {
                     self.loading = false;
                     self.say(e, Tone::Crit);
                 }
+                Job::Value(how, account, name, value) => {
+                    self.reading = None;
+                    match value {
+                        Ok(Some(value)) if matches!(how, Use::Reveal) => {
+                            self.reveal = Some(Reveal { account, name, value, at: Instant::now() });
+                        }
+                        Ok(Some(value)) => self.copy(name, value),
+                        Ok(None) => self.say(format!("missing · hop secret set {name} {account}"), Tone::Warn),
+                        Err(e) => self.say(e, Tone::Crit),
+                    }
+                }
             }
+        }
+        if self.reveal.as_ref().is_some_and(|r| r.at.elapsed() > SHOWN) {
+            self.reveal = None;
+        }
+        if let Some(clip) = self.clip.take_if(|c| c.at.elapsed() > SHOWN) {
+            self.say(format!("{} left the clipboard", clip.name), Tone::Info);
         }
         if self.note.as_ref().is_some_and(|n| n.2.elapsed() > NOTE_TTL) {
             self.note = None;
@@ -183,7 +240,8 @@ impl App {
             }
             KeyCode::Esc => self.filter.clear(),
             KeyCode::Enter if self.focus == Focus::Accounts => self.focus = Focus::Secrets,
-            KeyCode::Enter | KeyCode::Char('r' | 'y') => self.fetch(),
+            KeyCode::Enter | KeyCode::Char('r') => self.fetch(Use::Reveal),
+            KeyCode::Char('y') => self.fetch(Use::Copy),
             _ => {}
         }
     }
@@ -198,12 +256,36 @@ impl App {
         }
     }
 
-    /// `r` and `y` on the selected secret.
-    fn fetch(&mut self) {
+    /// `r` and `y` on the selected secret. A second `r` hides it again.
+    fn fetch(&mut self, how: Use) {
         let (Some(account), Some(secret)) = (self.account(), self.selected()) else { return };
-        if !secret.set {
-            let hint = format!("missing · hop secret set {} {}", secret.name, account.name);
-            self.say(hint, Tone::Warn);
+        let (account, name, set) = (account.name.clone(), secret.name.clone(), secret.set);
+        if !set {
+            return self.say(format!("missing · hop secret set {name} {account}"), Tone::Warn);
+        }
+        let shown = self.reveal.as_ref().is_some_and(|r| r.account == account && r.name == name);
+        if matches!(how, Use::Reveal) && shown {
+            self.reveal = None;
+            return;
+        }
+        self.reading = Some((account.clone(), name.clone()));
+        let tx = self.tx.clone();
+        thread::spawn(move || {
+            let value = vault::read(&account, &name);
+            tx.send(Job::Value(how, account, name, value))
+        });
+    }
+
+    fn copy(&mut self, name: String, value: String) {
+        // Let go of the previous copy first: it would empty the clipboard
+        // again if both copies hold the same value.
+        self.clip = None;
+        match Clipboard::new().and_then(|mut c| c.set().exclude_from_history().text(value.clone())) {
+            Ok(()) => {
+                self.say(format!("copied {name} · cleared in 30 s"), Tone::Ok);
+                self.clip = Some(Clip { name, value, at: Instant::now() });
+            }
+            Err(e) => self.say(format!("clipboard: {e}"), Tone::Crit),
         }
     }
 }
