@@ -254,3 +254,76 @@ pub fn host(cv: &mut Canvas, pose: &Pose) {
         }
     }
 }
+
+pub const SLOT_COLS: u16 = 48;
+pub const SLOT_ROWS: u16 = 16;
+/// When the three reels show the jackpot, and when the machine leaves.
+pub const JACKPOT_AT: f32 = 1.75;
+pub const SLOT_FOR: f32 = 2.8;
+
+/// The slot machine of a copy, `age` seconds after `y`. The reels stop one
+/// by one on the vault box; nothing of the value is ever drawn.
+pub fn slot(cv: &mut Canvas, age: f32, t: f32) {
+    let (w, h) = (cv.w, cv.h);
+    let body = w - 7;
+    cv.rect(1, 4, body, h - 4, c('k'));
+    cv.rect(2, 5, body - 2, h - 6, c('r'));
+    cv.rect(3, 6, body - 4, 1, c('y'));
+    cv.rect(3, h - 3, body - 4, 1, c('y'));
+    // Marquee with chasing bulbs.
+    cv.rect(4, 0, body - 6, 6, c('k'));
+    let chase = (t * 12.0) as i32;
+    for i in 0..(body - 6) / 3 {
+        let lit = (i + chase) % 3 == 0;
+        cv.rect(5 + i * 3, 0, 1, 1, c(if lit { 'Y' } else { 'o' }));
+        cv.rect(5 + i * 3, 5, 1, 1, c(if lit { 'o' } else { 'Y' }));
+    }
+    for (i, x) in [5, 17, 29].into_iter().enumerate() {
+        let (top, inner) = (9, 10);
+        cv.rect(x, top, 10, 12, c('k'));
+        cv.rect(x + 1, top + 1, 8, inner, c('w'));
+        let stop = 0.7 + 0.35 * i as f32;
+        let pos = if age < stop {
+            (age * 45.0) as i32 + i as i32 * 13
+        } else {
+            let settle = ((age - stop) * 20.0).min(TAU / 2.0);
+            sprites::JACKPOT as i32 * 10 - (2.0 * settle.sin()) as i32
+        };
+        for k in 0..2 {
+            let symbol = &sprites::SYMBOLS[((pos / 10 + k) as usize) % sprites::SYMBOLS.len()];
+            let y0 = top + 2 + k * 10 - pos.rem_euclid(10);
+            for (j, row) in symbol.iter().enumerate() {
+                let y = y0 + j as i32;
+                if y <= top || y > top + inner {
+                    continue;
+                }
+                for (dx, ch) in row.chars().enumerate() {
+                    if let Some(col) = pal(ch) {
+                        cv.set(x + 1 + dx as i32, y, col);
+                    }
+                }
+            }
+        }
+    }
+    // Pay line arrows.
+    cv.rect(3, 15, 2, 1, c('Y'));
+    cv.rect(body - 3, 15, 2, 1, c('Y'));
+    // Lever, pulled down for the first third of a second.
+    let pulled = age < 0.35;
+    let (lx, base) = (body + 2, 16);
+    let tip = if pulled { 26 } else { 5 };
+    cv.rect(body + 1, base - 1, 2, 3, c('S'));
+    let (y0, y1) = if pulled { (base, tip) } else { (tip, base) };
+    cv.rect(lx, y0, 2, y1 - y0, c('g'));
+    cv.disc(lx as f32 + 1.0, tip as f32, 2.6, |dx, dy| Some(if dx + dy < -1.5 { c('w') } else { c('r') }));
+    // Coin tray, spilling coins once the jackpot is in.
+    cv.rect(body / 2 - 6, h - 6, 12, 3, c('d'));
+    if age > JACKPOT_AT {
+        let q = age - JACKPOT_AT;
+        for (i, vx) in [-14.0, 3.0, 18.0].into_iter().enumerate() {
+            let x = body / 2 - 4 + (vx * q) as i32;
+            let y = h - 10 - (30.0 * q - 60.0 * q * q) as i32;
+            cv.sprite(x, y, &sprites::COIN[(i + (t * 10.0) as usize) % 3], false, 0);
+        }
+    }
+}
