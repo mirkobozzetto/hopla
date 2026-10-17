@@ -53,6 +53,11 @@ hopla reads the accounts that [hop](https://github.com/mirkobozzetto/hop)
 sets up: install hop first. Then run `hopla`, or `hop ui`. On Windows, hop
 and hopla need Git Bash.
 
+hopla works on the account of the terminal it starts in: the one a `.hop`
+file names for that folder, or the one `hop <account>` picked there. A
+switch in hopla changes that terminal only, the others keep theirs. See
+[one terminal at a time](https://github.com/mirkobozzetto/hop#one-terminal-at-a-time).
+
 ## Use
 
 <p align="center">
