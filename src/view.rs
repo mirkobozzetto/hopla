@@ -239,8 +239,8 @@ fn form_box(f: &mut Frame, form: &Form, area: Rect, t: f32) {
     let note: &[&str] = match form.kind {
         FormKind::Account => &[
             "saved in hop's .env, SSH key made if missing,",
-            "install.sh run, public key copied for GitHub,",
-            "then gh auth login",
+            "install.sh run, gh auth login, then the key",
+            "sent to GitHub, or copied if that fails",
         ],
         FormKind::Secret { .. } => &["typed blind, stored in the Keychain like hop secret set"],
     };
