@@ -104,7 +104,8 @@ enum Job {
     Deleted(String, String, Result<(), String>),
     Switched(String, Result<String, String>),
     Status(Result<Vec<String>, String>),
-    Created(hop::NewAccount, Result<String, String>),
+    // Boxed: four strings would double the size of every job.
+    Created(Box<hop::NewAccount>, Result<String, String>),
     /// The account, its public key for the fallback, and gh's verdict.
     KeyAdded(String, String, Result<(), String>),
     Removed(String, Result<(), String>),
@@ -605,7 +606,7 @@ impl App {
                 self.mode = Mode::Browse;
                 self.spawn(format!("creating {}", new.name), move || {
                     let done = hop::create(&new);
-                    Job::Created(new, done)
+                    Job::Created(Box::new(new), done)
                 });
             }
         }
