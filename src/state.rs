@@ -315,7 +315,8 @@ impl App {
                 hop::open_keys_page();
                 self.say(format!("{name} created · public key copied, paste it on GitHub"), Tone::Ok);
                 let mut login = Command::new("gh");
-                login.args(["auth", "login", "--hostname", "github.com", "--git-protocol", "ssh", "--web"]);
+                // A hop shell exports its account's token, and gh refuses to log in while one is set.
+                login.args(["auth", "login", "--hostname", "github.com", "--git-protocol", "ssh", "--web"]).env_remove("GH_TOKEN");
                 self.takeover = Some(Takeover { command: login, reply: None });
                 self.spawn("reading hop", || Job::Loaded(vault::load()));
             }

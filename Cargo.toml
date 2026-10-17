@@ -1,6 +1,6 @@
 [package]
 name = "hopla"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "A palette for your GitHub accounts and secrets, with a bunny in a top hat"
 repository = "https://github.com/mirkobozzetto/hopla"
