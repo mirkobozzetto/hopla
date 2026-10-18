@@ -92,8 +92,11 @@ Values are typed blind, one `*` per character, with the rules of
 1. adds the account to hop's `.env`,
 2. makes the SSH key if it does not exist,
 3. runs hop's `install.sh`,
-4. copies the public key and opens GitHub's page to paste it,
-5. runs `gh auth login` for that account.
+4. runs `gh auth login` for that account, with the right to add SSH keys,
+5. adds the public key to that account with `gh ssh-key add`.
+
+If GitHub refuses the key, or the login does not finish, hopla copies the
+public key and opens GitHub's page to paste it, and says so.
 
 Removing an account keeps its secrets: create it again and they are back.
 

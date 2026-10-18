@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 const SSH_KEYS_PAGE: &str = "https://github.com/settings/ssh/new";
+const GH_HOST: &str = "github.com";
 
 fn home() -> PathBuf {
     PathBuf::from(env::var_os("HOME").unwrap_or_default())
@@ -104,7 +105,7 @@ fn set_accounts(lines: &mut [String], accounts: &[&str]) {
 
 /// Adds the account to .env, brings back its secrets list if it was
 /// removed, makes the SSH key if missing, then reruns install.sh. Returns
-/// the public key, to paste on GitHub.
+/// the public key, to paste on GitHub if gh cannot add it.
 pub fn create(a: &NewAccount) -> Result<String, String> {
     valid(a)?;
     let prefix = a.name.to_uppercase();
@@ -126,6 +127,31 @@ pub fn create(a: &NewAccount) -> Result<String, String> {
     }
     run(Command::new("bash").arg(root().join("install.sh")).current_dir(root()))?;
     fs::read_to_string(key.with_extension("pub")).map_err(|e| e.to_string())
+}
+
+/// A hop shell exports its account's token: gh would act as that account,
+/// and refuses to log in while one is set.
+fn gh() -> Command {
+    let mut cmd = Command::new("gh");
+    cmd.env_remove("GH_TOKEN");
+    cmd
+}
+
+/// `gh auth login` with the right to add SSH keys. hopla adds the key
+/// itself, so gh's own key prompt is skipped.
+pub fn login() -> Command {
+    let mut cmd = gh();
+    cmd.args(["auth", "login", "--hostname", GH_HOST, "--git-protocol", "ssh", "--web", "--skip-ssh-key", "--scopes", "admin:public_key"]);
+    cmd
+}
+
+/// `gh ssh-key add` with the account's own token, so the key never lands on
+/// the account gh has active. A key already on the account is a success.
+pub fn add_key(a: &NewAccount) -> Result<(), String> {
+    let token = run(gh().args(["auth", "token", "--hostname", GH_HOST, "--user", &a.login]))?;
+    let title = format!("hop {}", a.name);
+    run(gh().env("GH_TOKEN", token.trim()).args(["ssh-key", "add", "--title", &title]).arg(expand(&a.key).with_extension("pub")))?;
+    Ok(())
 }
 
 /// Opens GitHub's page for a new SSH key in the default browser.

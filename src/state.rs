@@ -104,7 +104,10 @@ enum Job {
     Deleted(String, String, Result<(), String>),
     Switched(String, Result<String, String>),
     Status(Result<Vec<String>, String>),
-    Created(String, Result<String, String>),
+    // Boxed: four strings would double the size of every job.
+    Created(Box<hop::NewAccount>, Result<String, String>),
+    /// The account, its public key for the fallback, and gh's verdict.
+    KeyAdded(String, String, Result<(), String>),
     Removed(String, Result<(), String>),
 }
 
@@ -310,14 +313,27 @@ impl App {
                 self.say(verdict, tone);
             }
             Job::Status(Ok(lines)) => self.mode = Mode::Status(lines),
-            Job::Created(name, Ok(public_key)) => {
-                let _ = Clipboard::new().and_then(|mut c| c.set_text(public_key));
-                hop::open_keys_page();
-                self.say(format!("{name} created · public key copied, paste it on GitHub"), Tone::Ok);
-                let mut login = Command::new("gh");
-                // A hop shell exports its account's token, and gh refuses to log in while one is set.
-                login.args(["auth", "login", "--hostname", "github.com", "--git-protocol", "ssh", "--web"]).env_remove("GH_TOKEN");
-                self.takeover = Some(Takeover { command: login, reply: None });
+            Job::Created(account, Ok(public_key)) => {
+                // The login comes first: it grants the right to add the key.
+                let (reply, logged) = mpsc::channel();
+                self.takeover = Some(Takeover { command: hop::login(), reply: Some(reply) });
+                self.spawn("adding the SSH key", move || {
+                    let added = match logged.recv() {
+                        Ok(Ok(())) => hop::add_key(&account),
+                        _ => Err("gh auth login failed".into()),
+                    };
+                    Job::KeyAdded(account.name, public_key, added)
+                });
+            }
+            Job::KeyAdded(name, public_key, added) => {
+                match added {
+                    Ok(()) => self.say(format!("{name} created · SSH key on GitHub"), Tone::Ok),
+                    Err(e) => {
+                        let _ = Clipboard::new().and_then(|mut c| c.set_text(public_key));
+                        hop::open_keys_page();
+                        self.say(format!("{e} · public key copied, paste it on GitHub"), Tone::Warn);
+                    }
+                }
                 self.spawn("reading hop", || Job::Loaded(vault::load()));
             }
             Job::Removed(name, Ok(())) => {
@@ -590,7 +606,7 @@ impl App {
                 self.mode = Mode::Browse;
                 self.spawn(format!("creating {}", new.name), move || {
                     let done = hop::create(&new);
-                    Job::Created(new.name, done)
+                    Job::Created(Box::new(new), done)
                 });
             }
         }
